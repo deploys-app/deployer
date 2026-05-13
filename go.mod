@@ -1,6 +1,6 @@
 module github.com/deploys-app/deployer
 
-go 1.25.0
+go 1.26.3
 
 require (
 	cloud.google.com/go/pubsub v1.50.2
