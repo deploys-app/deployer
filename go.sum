@@ -43,8 +43,8 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/deploys-app/api v0.0.0-20250830145256-ff400ea06f14 h1:nRPRbSDZN1PgPtnNKIESdnjIvrRZF9h6MmoP5o2wX44=
-github.com/deploys-app/api v0.0.0-20250830145256-ff400ea06f14/go.mod h1:7aMzMAb0JD8TK9ayMTbysSQjv010nUTCJn5fSRSb2GA=
+github.com/deploys-app/api v0.0.0-20260522045749-8e9e13243dde h1:QbBBG22QXHCrNcDArUdY5+quZepRYP+hw3OCyPj7LhQ=
+github.com/deploys-app/api v0.0.0-20260522045749-8e9e13243dde/go.mod h1:X70UJs5awlRV4Cmn0FPJAgEbn4N933K8YgSKc1y9aD8=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/rVNCu3HqELle0jiPLLBs70cWOduZpkS1E78=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
