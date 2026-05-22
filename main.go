@@ -293,6 +293,14 @@ func (w *Worker) Run() {
 			x := x.RouteDelete
 			w.routeDelete(ctx, x)
 			forceFlush = true
+		case x.DomainCertCreate != nil:
+			x := x.DomainCertCreate
+			w.domainCertCreate(ctx, x)
+			forceFlush = true
+		case x.DomainCertDelete != nil:
+			x := x.DomainCertDelete
+			w.domainCertDelete(ctx, x)
+			forceFlush = true
 		}
 
 		if forceFlush || len(w.results) > 3 {
@@ -1029,20 +1037,12 @@ func (w *Worker) routeCreate(ctx context.Context, it *api.DeployerCommandRouteCr
 		}
 	}
 
-	if w.Cert {
-		slog.Info("route: creating cert", "id", it.ID, "domain", it.Domain)
-		err := w.Client.CreateCertificate(ctx, k8s.Certificate{
-			ID:        domainID,
-			ProjectID: projectID,
-			Domain:    it.Domain,
-		})
-		if err != nil {
-			slog.Error("route: creating certificate error", "id", it.ID, "error", err)
-			return
-		}
-	} else {
-		slog.Info("route: skip creating cert (disabled)", "id", it.ID, "domain", it.Domain)
-	}
+	// Cert lifecycle now lives on the Domain row (see domainCertCreate /
+	// domainCertDelete) so we only ever request a Let's Encrypt cert after
+	// DNS has been verified. The ingress above references
+	// `tls-<normalizeDomain(it.Domain)>` regardless; k8s tolerates a
+	// not-yet-existent secret, and cert-manager populates it once
+	// verification + issuance complete.
 
 	slog.Info("route: created", "id", it.ID)
 
@@ -1057,7 +1057,6 @@ func (w *Worker) routeDelete(ctx context.Context, it *api.DeployerCommandRouteDe
 	slog.Info("route: deleting", "id", it.ID)
 
 	ingID := fmt.Sprintf("domain-%d", it.ID)
-	domainID := normalizeDomain(it.Domain)
 
 	err := w.Client.DeleteIngress(ctx, ingID)
 	if err != nil {
@@ -1065,24 +1064,11 @@ func (w *Worker) routeDelete(ctx context.Context, it *api.DeployerCommandRouteDe
 		return
 	}
 
-	if w.Cert {
-		active, err := w.Deployer.IsDomainActive(ctx, &api.DeployerIsDomainActive{Domain: it.Domain})
-		if err != nil {
-			slog.Error("route: check domain active error", "id", it.ID, "error", err)
-			return
-		}
-
-		if !active {
-			slog.Info("route: no more active domain, delete certificate", "id", it.ID, "domain", it.Domain)
-			err = w.Client.DeleteCertificate(ctx, domainID)
-			if err != nil {
-				slog.Error("route: deleting certificate error", "id", it.ID, "error", err)
-				return
-			}
-		} else {
-			slog.Info("route: domain is still active, skip delete certificate", "domain", it.Domain)
-		}
-	}
+	// Cert is no longer torn down with the route — it now follows the
+	// Domain row (see domainCertDelete). Deleting the last route on a domain
+	// used to also delete the cert, which produced LE-quota burn cycles when
+	// users rapidly re-created routes; keeping the cert tied to the domain
+	// avoids that.
 
 	slog.Info("route: deleted", "id", it.ID)
 
@@ -1090,6 +1076,66 @@ func (w *Worker) routeDelete(ctx context.Context, it *api.DeployerCommandRouteDe
 		RouteDelete: &api.DeployerSetResultItemGeneral{
 			ID: it.ID,
 		},
+	})
+}
+
+// domainCertCreate issues the cert-manager Certificate for a non-CDN domain
+// that's just passed DNS verification. The cert ID is normalizeDomain(domain)
+// so it matches the secret name (`tls-<normalizeDomain>`) that route ingresses
+// already reference — no rename / migration of existing certs needed.
+func (w *Worker) domainCertCreate(ctx context.Context, it *api.DeployerCommandDomainCertCreate) {
+	slog.Info("domain cert: creating", "id", it.ID, "domain", it.Domain)
+
+	if !w.Cert {
+		slog.Info("domain cert: skip (disabled)", "id", it.ID, "domain", it.Domain)
+		// Still report success so the apiserver advances cert_status —
+		// otherwise the deployer-poll loops forever on a clean cluster.
+		w.results = append(w.results, &api.DeployerSetResultItem{
+			DomainCertCreate: &api.DeployerSetResultItemGeneral{ID: it.ID},
+		})
+		return
+	}
+
+	certID := normalizeDomain(it.Domain)
+	projectID := idString(it.ProjectID)
+	err := w.Client.CreateCertificate(ctx, k8s.Certificate{
+		ID:        certID,
+		ProjectID: projectID,
+		Domain:    it.Domain,
+	})
+	if err != nil {
+		slog.Error("domain cert: creating error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("domain cert: created", "id", it.ID)
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		DomainCertCreate: &api.DeployerSetResultItemGeneral{ID: it.ID},
+	})
+}
+
+// domainCertDelete tears down the cert-manager Certificate for a domain
+// whose DNS no longer points at us (or that's being deleted entirely).
+func (w *Worker) domainCertDelete(ctx context.Context, it *api.DeployerCommandDomainCertDelete) {
+	slog.Info("domain cert: deleting", "id", it.ID, "domain", it.Domain)
+
+	if !w.Cert {
+		w.results = append(w.results, &api.DeployerSetResultItem{
+			DomainCertDelete: &api.DeployerSetResultItemGeneral{ID: it.ID},
+		})
+		return
+	}
+
+	certID := normalizeDomain(it.Domain)
+	err := w.Client.DeleteCertificate(ctx, certID)
+	if err != nil {
+		slog.Error("domain cert: deleting error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("domain cert: deleted", "id", it.ID)
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		DomainCertDelete: &api.DeployerSetResultItemGeneral{ID: it.ID},
 	})
 }
 

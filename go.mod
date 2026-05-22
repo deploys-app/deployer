@@ -2,6 +2,8 @@ module github.com/deploys-app/deployer
 
 go 1.26.3
 
+replace github.com/deploys-app/api => ../api
+
 require (
 	cloud.google.com/go/pubsub v1.50.2
 	github.com/acoshift/configfile v1.9.0
