@@ -1102,6 +1102,7 @@ func (w *Worker) domainCertCreate(ctx context.Context, it *api.DeployerCommandDo
 		ID:        certID,
 		ProjectID: projectID,
 		Domain:    it.Domain,
+		Wildcard:  it.Wildcard,
 	})
 	if err != nil {
 		slog.Error("domain cert: creating error", "id", it.ID, "error", err)
