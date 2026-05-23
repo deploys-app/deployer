@@ -13,10 +13,10 @@ type Certificate struct {
 	ID        string
 	ProjectID string
 	Domain    string
-	// Wildcard requests a `*.<Domain>` SAN alongside the apex. Wildcard certs
-	// must use DNS-01 (Let's Encrypt rejects HTTP-01 for wildcards), so we
-	// also point IssuerRef at the cluster's DNS-01 issuer instead of the
-	// default HTTP-01 one.
+	// Wildcard adds a `*.<Domain>` SAN alongside the apex. The Issuer's solver
+	// list already routes the wildcard challenge to DNS-01 (Let's Encrypt
+	// rejects HTTP-01 for wildcards, so cert-manager filters HTTP-01 solvers
+	// out automatically), so no IssuerRef change is needed.
 	Wildcard bool
 }
 
@@ -40,16 +40,8 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) error {
 	}
 
 	dnsNames := []string{obj.Domain}
-	issuer := cmmeta.ObjectReference{
-		Name: "letsencrypt",
-		Kind: v1.IssuerKind,
-	}
 	if obj.Wildcard {
 		dnsNames = append(dnsNames, "*."+obj.Domain)
-		issuer = cmmeta.ObjectReference{
-			Name: "letsencrypt-dns01",
-			Kind: v1.ClusterIssuerKind,
-		}
 	}
 
 	cert.ObjectMeta.Name = obj.ID
@@ -57,7 +49,10 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) error {
 	cert.Spec = v1.CertificateSpec{
 		CommonName: obj.Domain,
 		DNSNames:   dnsNames,
-		IssuerRef:  issuer,
+		IssuerRef: cmmeta.ObjectReference{
+			Name: "letsencrypt",
+			Kind: v1.IssuerKind,
+		},
 		PrivateKey: &v1.CertificatePrivateKey{
 			Algorithm: v1.ECDSAKeyAlgorithm,
 			Size:      256,
