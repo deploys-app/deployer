@@ -293,6 +293,14 @@ func (w *Worker) Run() {
 			x := x.RouteDelete
 			w.routeDelete(ctx, x)
 			forceFlush = true
+		case x.WAFSet != nil:
+			x := x.WAFSet
+			w.wafSet(ctx, x)
+			forceFlush = true
+		case x.WAFDelete != nil:
+			x := x.WAFDelete
+			w.wafDelete(ctx, x)
+			forceFlush = true
 		case x.DomainCertCreate != nil:
 			x := x.DomainCertCreate
 			w.domainCertCreate(ctx, x)
@@ -1074,6 +1082,46 @@ func (w *Worker) routeDelete(ctx context.Context, it *api.DeployerCommandRouteDe
 
 	w.results = append(w.results, &api.DeployerSetResultItem{
 		RouteDelete: &api.DeployerSetResultItemGeneral{
+			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) wafSet(ctx context.Context, it *api.DeployerCommandWAFSet) {
+	slog.Info("waf: setting", "id", it.ID, "zone", it.ZoneID)
+
+	projectID := idString(it.ProjectID)
+
+	err := w.Client.CreateWAFZone(ctx, projectID, it.ZoneID, it.Rules)
+	if err != nil {
+		slog.Error("waf: setting error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("waf: set", "id", it.ID, "zone", it.ZoneID)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		WAFSet: &api.DeployerSetResultItemGeneral{
+			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) wafDelete(ctx context.Context, it *api.DeployerCommandWAFDelete) {
+	slog.Info("waf: deleting", "id", it.ID, "zone", it.ZoneID)
+
+	projectID := idString(it.ProjectID)
+
+	err := w.Client.DeleteWAFZone(ctx, projectID, it.ZoneID)
+	if err != nil {
+		slog.Error("waf: deleting error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("waf: deleted", "id", it.ID, "zone", it.ZoneID)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		WAFDelete: &api.DeployerSetResultItemGeneral{
 			ID: it.ID,
 		},
 	})
