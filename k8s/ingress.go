@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/deploys-app/api"
@@ -106,6 +107,15 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
+	// Bind to the project's WAF zone if one exists, so routes added after the
+	// zone was created are still covered. Best-effort: a lookup error must not
+	// fail ingress creation since WAF is best-effort relative to routing.
+	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up waf zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[wafZoneAnnotation] = zoneID
+	}
+
 	ing := &networking.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: x.ID,
@@ -188,6 +198,15 @@ func (c *Client) CreateRedirectIngress(ctx context.Context, x RedirectIngress) e
 			AuthResponseHeaders: a.AuthResponseHeaders,
 		})
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
+	}
+
+	// Bind to the project's WAF zone if one exists, so routes added after the
+	// zone was created are still covered. Best-effort: a lookup error must not
+	// fail ingress creation since WAF is best-effort relative to routing.
+	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up waf zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[wafZoneAnnotation] = zoneID
 	}
 
 	ing := &networking.Ingress{
