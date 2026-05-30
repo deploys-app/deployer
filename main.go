@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -1020,6 +1021,27 @@ func (w *Worker) routeCreate(ctx context.Context, it *api.DeployerCommandRouteCr
 			ing.UpstreamPath = "/ipns/" + strings.TrimPrefix(it.Target, "ipns://")
 		case strings.HasPrefix(it.Target, "dnslink://"):
 			ing.Service = "ipfs-gateway"
+		case strings.HasPrefix(it.Target, "http://"):
+			// External upstream: customer-owned server by IP, fronted by our
+			// edge + WAF. Back it with a selector-less Service + Endpoints so
+			// parapet routes to the IP like any other backend.
+			host, port, ok := parseExternalHTTPTarget(it.Target)
+			if !ok {
+				slog.Error("route: invalid external target", "id", it.ID, "target", it.Target)
+				return
+			}
+			extID := resourceID(it.ProjectID, "ext-"+idString(it.ID))
+			err := w.Client.CreateExternalUpstream(ctx, k8s.ExternalUpstream{
+				ID:        extID,
+				ProjectID: projectID,
+				IP:        host,
+				Port:      port,
+			})
+			if err != nil {
+				slog.Error("route: creating external upstream error", "id", it.ID, "error", err)
+				return
+			}
+			ing.Service = extID
 		}
 
 		err := w.Client.CreateIngress(ctx, ing)
@@ -1069,6 +1091,15 @@ func (w *Worker) routeDelete(ctx context.Context, it *api.DeployerCommandRouteDe
 	err := w.Client.DeleteIngress(ctx, ingID)
 	if err != nil {
 		slog.Error("route: deleting ingress error", "id", it.ID, "error", err)
+		return
+	}
+
+	// External routes (http://<ip>) also create a backing Service + Endpoints
+	// named ext-<id>-<projectID>. The delete is unconditional and idempotent:
+	// for non-external routes nothing exists, so this is a no-op.
+	extID := resourceID(it.ProjectID, "ext-"+idString(it.ID))
+	if err := w.Client.DeleteExternalUpstream(ctx, extID); err != nil {
+		slog.Error("route: deleting external upstream error", "id", it.ID, "error", err)
 		return
 	}
 
@@ -1444,6 +1475,35 @@ func resourceID(projectID int64, name string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s-%d", name, projectID)
+}
+
+// parseExternalHTTPTarget parses an http://<ip>[:port] external route target
+// into the upstream IP and port (defaulting to 80). It mirrors the apiserver's
+// validExternalTarget guard; the apiserver has already rejected non-public IPs
+// before the command reaches here, so this is a defensive re-parse.
+func parseExternalHTTPTarget(target string) (ip string, port int, ok bool) {
+	hostport := strings.TrimPrefix(target, "http://")
+	if hostport == "" {
+		return "", 0, false
+	}
+
+	host := hostport
+	port = 80
+	if h, p, err := net.SplitHostPort(hostport); err == nil {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return "", 0, false
+		}
+		host, port = h, n
+	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		// Bare bracketed IPv6 literal without a port.
+		host = host[1 : len(host)-1]
+	}
+
+	if net.ParseIP(host) == nil {
+		return "", 0, false
+	}
+	return host, port, true
 }
 
 func pullSecretResourceID(projectID int64, name string) string {
