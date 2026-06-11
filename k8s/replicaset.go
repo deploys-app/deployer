@@ -16,9 +16,14 @@ import (
 )
 
 type ReplicaSet struct {
-	ID            string
-	ProjectID     string
-	Name          string
+	ID        string
+	ProjectID string
+	// Name is the k8s resource name prefix (the apiserver's KubeName).
+	Name string
+	// DisplayName is the user-facing deployment name, surfaced via K_SERVICE/
+	// K_CONFIGURATION and the deploys.app/name annotation. Empty on commands
+	// from apiservers that predate it — displayName() falls back to Name.
+	DisplayName   string
 	Revision      int64
 	Image         string
 	Env           Env
@@ -49,7 +54,7 @@ func (c *Client) CreateReplicaSet(ctx context.Context, obj ReplicaSet) error {
 	annotations := map[string]string{
 		"deploys.app/id":        obj.ID,
 		"deploys.app/projectId": obj.ProjectID,
-		"deploys.app/name":      obj.Name,
+		"deploys.app/name":      obj.displayName(),
 		"deploys.app/revision":  strconv.FormatInt(obj.Revision, 10),
 		"deploys.app/at":        time.Now().Format(time.RFC3339),
 	}
@@ -64,9 +69,9 @@ func (c *Client) CreateReplicaSet(ctx context.Context, obj ReplicaSet) error {
 	if obj.Env == nil {
 		obj.Env = make(Env)
 	}
-	obj.Env["K_SERVICE"] = obj.Name
-	obj.Env["K_REVISION"] = fmt.Sprintf("%s.%d", obj.Name, obj.Revision)
-	obj.Env["K_CONFIGURATION"] = obj.Name
+	obj.Env["K_SERVICE"] = obj.displayName()
+	obj.Env["K_REVISION"] = fmt.Sprintf("%s.%d", obj.displayName(), obj.Revision)
+	obj.Env["K_CONFIGURATION"] = obj.displayName()
 
 	var (
 		livenessProbe  *v1.Probe
@@ -298,4 +303,11 @@ func (c *Client) GetReplicaSetPodIP(ctx context.Context, id string, revision int
 	}
 
 	return list.Items[0].Status.PodIP, nil
+}
+
+func (obj *ReplicaSet) displayName() string {
+	if obj.DisplayName != "" {
+		return obj.DisplayName
+	}
+	return obj.Name
 }
