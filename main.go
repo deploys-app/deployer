@@ -384,6 +384,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 	slog.Info("deployment: deploying", "id", it.ID)
 
 	id := resourceID(it.ProjectID, it.Name)
+	host := deploymentHost(it.DisplayName, it.Name, it.ProjectID)
 	projectID := idString(it.ProjectID)
 
 	var result api.DeployerSetResultItemDeploy
@@ -476,7 +477,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				ID:        id + "-internal",
 				Service:   id,
 				ProjectID: projectID,
-				Domain:    fmt.Sprintf("%s.internal%s", id, w.location.DomainSuffix),
+				Domain:    fmt.Sprintf("%s.internal%s", host, w.location.DomainSuffix),
 				Path:      "/",
 				Internal:  true,
 			})
@@ -498,7 +499,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					ID:        id,
 					Service:   id,
 					ProjectID: projectID,
-					Domain:    fmt.Sprintf("%s%s", id, w.location.DomainSuffix),
+					Domain:    fmt.Sprintf("%s%s", host, w.location.DomainSuffix),
 					Path:      "/",
 				})
 				if err != nil {
@@ -1480,6 +1481,24 @@ func resourceID(projectID int64, name string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s-%d", name, projectID)
+}
+
+// deploymentHost is the first DNS label of a deployment's default public /
+// internal URL. It prefers the friendly display name (`<displayName>-<projectID>`)
+// and falls back to the id-based k8s name (`<name>-<projectID>`, where Name is
+// the resource prefix) only when the display-name host would overflow the
+// 63-char DNS label limit. Mirrors the apiserver's deploymentHost
+// (server/deployment_model.go) so the shown URL and the ingress host agree;
+// keep the two in sync. DisplayName is empty on legacy/older commands — then the
+// resource name (== display name for legacy) is used.
+func deploymentHost(displayName, name string, projectID int64) string {
+	if displayName == "" {
+		displayName = name
+	}
+	if h := resourceID(projectID, displayName); len(h) <= 63 {
+		return h
+	}
+	return resourceID(projectID, name)
 }
 
 // parseExternalHTTPTarget parses an http://<ip>[:port] external route target
