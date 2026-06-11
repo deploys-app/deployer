@@ -17,9 +17,14 @@ import (
 )
 
 type CronJob struct {
-	ID            string
-	ProjectID     string
-	Name          string
+	ID        string
+	ProjectID string
+	// Name is the k8s resource name prefix (the apiserver's KubeName).
+	Name string
+	// DisplayName is the user-facing deployment name, surfaced via K_SERVICE/
+	// K_CONFIGURATION and the deploys.app/name annotation. Empty on commands
+	// from apiservers that predate it — displayName() falls back to Name.
+	DisplayName   string
 	Revision      int64
 	Image         string
 	Env           Env
@@ -57,7 +62,7 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 	annotations := map[string]string{
 		"deploys.app/id":        obj.ID,
 		"deploys.app/projectId": obj.ProjectID,
-		"deploys.app/name":      obj.Name,
+		"deploys.app/name":      obj.displayName(),
 		"deploys.app/revision":  strconv.FormatInt(obj.Revision, 10),
 		"deploys.app/at":        time.Now().Format(time.RFC3339),
 	}
@@ -65,9 +70,9 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 	if obj.Env == nil {
 		obj.Env = make(Env)
 	}
-	obj.Env["K_SERVICE"] = obj.Name
-	obj.Env["K_REVISION"] = fmt.Sprintf("%s.%d", obj.Name, obj.Revision)
-	obj.Env["K_CONFIGURATION"] = obj.Name
+	obj.Env["K_SERVICE"] = obj.displayName()
+	obj.Env["K_REVISION"] = fmt.Sprintf("%s.%d", obj.displayName(), obj.Revision)
+	obj.Env["K_CONFIGURATION"] = obj.displayName()
 
 	limits := v1.ResourceList{
 		"ephemeral-storage": resource.MustParse("30Gi"),
@@ -250,4 +255,11 @@ func (c *Client) DeleteCronJob(ctx context.Context, id string) error {
 		return nil
 	}
 	return err
+}
+
+func (obj *CronJob) displayName() string {
+	if obj.DisplayName != "" {
+		return obj.DisplayName
+	}
+	return obj.Name
 }
