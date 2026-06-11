@@ -107,13 +107,19 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
-	// Bind to the project's WAF zone if one exists, so routes added after the
-	// zone was created are still covered. Best-effort: a lookup error must not
-	// fail ingress creation since WAF is best-effort relative to routing.
+	// Bind to the project's WAF and ratelimit zones if they exist, so routes
+	// added after the zones were created are still covered. Best-effort: a
+	// lookup error must not fail ingress creation since WAF is best-effort
+	// relative to routing.
 	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
 		slog.Error("ingress: looking up waf zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
 		annotation[wafZoneAnnotation] = zoneID
+	}
+	if zoneID, err := c.rateLimitZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up ratelimit zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[rateLimitZoneAnnotation] = zoneID
 	}
 
 	ing := &networking.Ingress{
@@ -200,13 +206,19 @@ func (c *Client) CreateRedirectIngress(ctx context.Context, x RedirectIngress) e
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
-	// Bind to the project's WAF zone if one exists, so routes added after the
-	// zone was created are still covered. Best-effort: a lookup error must not
-	// fail ingress creation since WAF is best-effort relative to routing.
+	// Bind to the project's WAF and ratelimit zones if they exist, so routes
+	// added after the zones were created are still covered. Best-effort: a
+	// lookup error must not fail ingress creation since WAF is best-effort
+	// relative to routing.
 	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
 		slog.Error("ingress: looking up waf zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
 		annotation[wafZoneAnnotation] = zoneID
+	}
+	if zoneID, err := c.rateLimitZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up ratelimit zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[rateLimitZoneAnnotation] = zoneID
 	}
 
 	ing := &networking.Ingress{
