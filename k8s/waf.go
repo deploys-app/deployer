@@ -54,32 +54,38 @@ func (c *Client) CreateWAFZone(ctx context.Context, projectID string, zoneID, ra
 		return err
 	}
 
-	if len(limits) > 0 {
-		limitsYAML, err := yaml.Marshal(struct {
-			Limits []api.WAFLimit `yaml:"limits"`
-		}{Limits: limits})
-		if err != nil {
-			return err
-		}
-		err = c.upsertZoneConfigMap(ctx, projectID, rateLimitZoneID, rateLimitLabel, map[string]string{
-			"limits.yaml": string(limitsYAML),
-		})
-	} else {
-		err = c.deleteConfigMap(ctx, rateLimitZoneID)
+	// auto-apply the zones to all of the project's routes. An empty
+	// rateLimitZoneID means the command came from an apiserver that predates
+	// rate limits — leave everything ratelimit-related untouched so a mixed
+	// version rollout (or apiserver rollback) can't wedge WAF zone work.
+	annotations := map[string]string{
+		wafZoneAnnotation: zoneID,
 	}
-	if err != nil {
-		return err
+	if rateLimitZoneID != "" {
+		if len(limits) > 0 {
+			limitsYAML, err := yaml.Marshal(struct {
+				Limits []api.WAFLimit `yaml:"limits"`
+			}{Limits: limits})
+			if err != nil {
+				return err
+			}
+			err = c.upsertZoneConfigMap(ctx, projectID, rateLimitZoneID, rateLimitLabel, map[string]string{
+				"limits.yaml": string(limitsYAML),
+			})
+			if err != nil {
+				return err
+			}
+			annotations[rateLimitZoneAnnotation] = rateLimitZoneID
+		} else {
+			err = c.deleteConfigMap(ctx, rateLimitZoneID)
+			if err != nil {
+				return err
+			}
+			annotations[rateLimitZoneAnnotation] = ""
+		}
 	}
 
-	// auto-apply the zones to all of the project's routes
-	rl := ""
-	if len(limits) > 0 {
-		rl = rateLimitZoneID
-	}
-	return c.syncZoneAnnotations(ctx, projectID, map[string]string{
-		wafZoneAnnotation:       zoneID,
-		rateLimitZoneAnnotation: rl,
-	})
+	return c.syncZoneAnnotations(ctx, projectID, annotations)
 }
 
 // DeleteWAFZone removes the project's WAF zone and ratelimit zone ConfigMaps
@@ -90,15 +96,22 @@ func (c *Client) DeleteWAFZone(ctx context.Context, projectID string, zoneID, ra
 	if err != nil {
 		return err
 	}
-	err = c.deleteConfigMap(ctx, rateLimitZoneID)
-	if err != nil {
-		return err
+	// Empty rateLimitZoneID = pre-ratelimit apiserver (see CreateWAFZone);
+	// nothing ratelimit-related exists to tear down.
+	if rateLimitZoneID != "" {
+		err = c.deleteConfigMap(ctx, rateLimitZoneID)
+		if err != nil {
+			return err
+		}
 	}
 
-	return c.syncZoneAnnotations(ctx, projectID, map[string]string{
-		wafZoneAnnotation:       "",
-		rateLimitZoneAnnotation: "",
-	})
+	annotations := map[string]string{
+		wafZoneAnnotation: "",
+	}
+	if rateLimitZoneID != "" {
+		annotations[rateLimitZoneAnnotation] = ""
+	}
+	return c.syncZoneAnnotations(ctx, projectID, annotations)
 }
 
 // upsertZoneConfigMap creates or replaces a parapet zone ConfigMap: name =
