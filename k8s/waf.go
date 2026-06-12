@@ -63,14 +63,12 @@ func (c *Client) CreateWAFZone(ctx context.Context, projectID string, zoneID, ra
 	}
 	if rateLimitZoneID != "" {
 		if len(limits) > 0 {
-			limitsYAML, err := yaml.Marshal(struct {
-				Limits []api.WAFLimit `yaml:"limits"`
-			}{Limits: limits})
+			limitsYAML, err := marshalLimitsYAML(limits)
 			if err != nil {
 				return err
 			}
 			err = c.upsertZoneConfigMap(ctx, projectID, rateLimitZoneID, rateLimitLabel, map[string]string{
-				"limits.yaml": string(limitsYAML),
+				"limits.yaml": limitsYAML,
 			})
 			if err != nil {
 				return err
@@ -112,6 +110,21 @@ func (c *Client) DeleteWAFZone(ctx context.Context, projectID string, zoneID, ra
 		annotations[rateLimitZoneAnnotation] = ""
 	}
 	return c.syncZoneAnnotations(ctx, projectID, annotations)
+}
+
+// marshalLimitsYAML renders the rate-limit ConfigMap document consumed by
+// parapet-ingress-controller's ratelimitrule.Parse. api.WAFLimit's yaml tags
+// are that contract (id/key/rate/window/algorithm/mode/status/message/filter);
+// optional fields use omitempty so a zone without them renders byte-identical
+// to what older controllers already accept.
+func marshalLimitsYAML(limits []api.WAFLimit) (string, error) {
+	b, err := yaml.Marshal(struct {
+		Limits []api.WAFLimit `yaml:"limits"`
+	}{Limits: limits})
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // upsertZoneConfigMap creates or replaces a parapet zone ConfigMap: name =
