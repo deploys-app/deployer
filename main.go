@@ -409,24 +409,10 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 		if it.Type == api.DeploymentTypeStatic {
 			upstreamPath := "/" + staticSitePrefix(it)
 
-			// internal ingress (class parapet-internal), same host rule as WebService
+			// Static sites have no pod/Service — they are served by the shared
+			// static-gateway — so there is no internal (parapet-internal)
+			// ingress, only the public default URL.
 			err := w.Client.CreateIngress(ctx, k8s.Ingress{
-				ID:           id + "-internal",
-				Service:      "static-gateway",
-				ProjectID:    projectID,
-				Domain:       fmt.Sprintf("%s.internal%s", host, w.location.DomainSuffix),
-				Path:         "/",
-				UpstreamHost: "static-gateway",
-				UpstreamPath: upstreamPath,
-				Internal:     true,
-			})
-			if err != nil {
-				slog.Error("deployment: creating internal ingress error", "id", it.ID, "error", err)
-				return err
-			}
-
-			// public ingress (class parapet), same host rule as WebService
-			err = w.Client.CreateIngress(ctx, k8s.Ingress{
 				ID:           id,
 				Service:      "static-gateway",
 				ProjectID:    projectID,
@@ -903,10 +889,12 @@ func (w *Worker) deploymentRemoveK8SResource(ctx context.Context, it *api.Deploy
 	var err error
 	switch it.Type {
 	case api.DeploymentTypeStatic:
-		// Static deployments only ever created the two default-URL Ingresses
-		// (no Deployment/Service/HPA/PVC/ConfigMap). Remove just those and
-		// return early — both deletes are delete-if-exists (no-op on NotFound),
-		// so tearing down a deployment that only had ingresses can't error.
+		// Static deployments create only the public default-URL Ingress (no
+		// Deployment/Service/HPA/PVC/ConfigMap). Remove it, plus — defensively
+		// — the "-internal" ingress an earlier deployer version used to create,
+		// so a static site deployed before this change is torn down cleanly.
+		// Both deletes are delete-if-exists (no-op on NotFound), so this can't
+		// error.
 		err = w.Client.DeleteIngress(ctx, id)
 		if err != nil {
 			slog.Error("deployment: deleting ingress error", "id", it.ID, "error", err)
