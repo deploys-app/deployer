@@ -126,13 +126,14 @@ func main() {
 	}).Deployer()
 
 	w := Worker{
-		Deployer:     deployer,
-		Client:       k8sClient,
-		RuntimeClass: cfg.String("runtime_class"),
-		H2CP:         cfg.Bool("h2cp"),
-		Cert:         cfg.Bool("cert"),
-		CPULimit:     cfg.StringDefault("cpu_limit", defaultLimitCPU),
-		MemoryLimit:  cfg.StringDefault("memory_limit", defaultMemoryLimit),
+		Deployer:        deployer,
+		Client:          k8sClient,
+		RuntimeClass:    cfg.String("runtime_class"),
+		H2CP:            cfg.Bool("h2cp"),
+		Cert:            cfg.Bool("cert"),
+		CPULimit:        cfg.StringDefault("cpu_limit", defaultLimitCPU),
+		MemoryLimit:     cfg.StringDefault("memory_limit", defaultMemoryLimit),
+		AccessVerifyURL: cfg.StringDefault("access_verify_url", defaultAccessVerifyURL),
 	}
 
 	stop := make(chan os.Signal, 1)
@@ -154,6 +155,11 @@ const (
 	defaultRequestCPU  = "0.01"
 	defaultLimitCPU    = "2"
 	defaultMemoryLimit = "2Gi"
+
+	// defaultAccessVerifyURL is the forward-auth verifier the public default-URL
+	// ingress is pointed at when a deployment enables Require Google login. The
+	// per-deployment numeric id is appended as ?d=<id> by accessForwardAuth.
+	defaultAccessVerifyURL = "https://access.deploys.app/verify"
 )
 
 type Worker struct {
@@ -164,10 +170,39 @@ type Worker struct {
 	Cert         bool // manage cert using cert manager
 	CPULimit     string
 	MemoryLimit  string
+	// AccessVerifyURL is the base forward-auth target for Deployment Access
+	// (env ACCESS_VERIFY_URL, default defaultAccessVerifyURL). It gates the
+	// public default URL when Spec.Access.RequireGoogleLogin is set.
+	AccessVerifyURL string
 
 	// state
 	location *api.LocationItem
 	results  []*api.DeployerSetResultItem
+}
+
+// accessForwardAuth synthesizes the forward-auth config for a deployment's
+// public default-URL ingress when Deployment Access is enabled. It returns nil
+// when access is off or absent, so the public ingress stays ungated and public.
+//
+// When enabled it points parapet's in-cluster ForwardAuth at the access
+// verifier, scoped to this deployment by its numeric command id (it.ID), which
+// is exactly what the apiserver's /internal/access/policy?d= resolves. The
+// resulting *api.RouteConfigForwardAuth is set on k8s.Ingress.Config.ForwardAuth
+// so CreateIngress emits the identical parapet.moonrhythm.io/forward-auth
+// annotation it already emits for route forward-auth.
+//
+// Phase 1 wires this onto the PUBLIC ingress only (WebService external + Static
+// branch); the internal (parapet-internal) ingress, route ingresses, and
+// redirect ingresses are left ungated.
+func (w *Worker) accessForwardAuth(it *api.DeployerCommandDeploymentDeploy) *api.RouteConfigForwardAuth {
+	if it.Spec.Access == nil || !it.Spec.Access.RequireGoogleLogin {
+		return nil
+	}
+	return &api.RouteConfigForwardAuth{
+		Target:              w.AccessVerifyURL + "?d=" + strconv.FormatInt(it.ID, 10),
+		AuthRequestHeaders:  []string{"Cookie"},
+		AuthResponseHeaders: []string{"X-Auth-Email", "X-Auth-User"},
+	}
 }
 
 func (w *Worker) cpuLimit(limit string) string {
@@ -420,6 +455,10 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Path:         "/",
 				UpstreamHost: "static-gateway",
 				UpstreamPath: upstreamPath,
+				// Deployment Access: gate the public default URL when Require
+				// Google login is on. Static has no internal ingress, so this
+				// public ingress is the only surface to gate.
+				Config: api.RouteConfig{ForwardAuth: w.accessForwardAuth(it)},
 			})
 			if err != nil {
 				slog.Error("deployment: creating external ingress error", "id", it.ID, "error", err)
@@ -535,6 +574,10 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					ProjectID: projectID,
 					Domain:    fmt.Sprintf("%s%s", host, w.location.DomainSuffix),
 					Path:      "/",
+					// Deployment Access: gate the public default URL when
+					// Require Google login is on. The internal ingress above is
+					// left ungated per spec §10.
+					Config: api.RouteConfig{ForwardAuth: w.accessForwardAuth(it)},
 				})
 				if err != nil {
 					slog.Error("deployment: creating external ingress error", "id", it.ID, "error", err)
