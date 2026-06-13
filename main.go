@@ -396,6 +396,54 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 			Revision: it.Revision,
 		}
 
+		// Static deployments are served by the shared in-cluster static-gateway
+		// reading the release directly from object storage. They produce NO
+		// workload at all: no Deployment, Service, HPA, PVC, ConfigMap, or
+		// pull-secret. The only k8s objects are the two default-URL Ingresses
+		// (public + internal), both backed by the shared static-gateway Service
+		// with the release prefix carried in upstream-path — the exact
+		// shared-backend shape ipfs:// uses (see routeCreate / main.go ~1020).
+		// Handle it here, before the ConfigMap creation and the container-type
+		// branches, and return early so it never falls through into workload
+		// logic.
+		if it.Type == api.DeploymentTypeStatic {
+			upstreamPath := "/" + staticSitePrefix(it)
+
+			// internal ingress (class parapet-internal), same host rule as WebService
+			err := w.Client.CreateIngress(ctx, k8s.Ingress{
+				ID:           id + "-internal",
+				Service:      "static-gateway",
+				ProjectID:    projectID,
+				Domain:       fmt.Sprintf("%s.internal%s", host, w.location.DomainSuffix),
+				Path:         "/",
+				UpstreamHost: "static-gateway",
+				UpstreamPath: upstreamPath,
+				Internal:     true,
+			})
+			if err != nil {
+				slog.Error("deployment: creating internal ingress error", "id", it.ID, "error", err)
+				return err
+			}
+
+			// public ingress (class parapet), same host rule as WebService
+			err = w.Client.CreateIngress(ctx, k8s.Ingress{
+				ID:           id,
+				Service:      "static-gateway",
+				ProjectID:    projectID,
+				Domain:       fmt.Sprintf("%s%s", host, w.location.DomainSuffix),
+				Path:         "/",
+				UpstreamHost: "static-gateway",
+				UpstreamPath: upstreamPath,
+			})
+			if err != nil {
+				slog.Error("deployment: creating external ingress error", "id", it.ID, "error", err)
+				return err
+			}
+
+			result.Success = true
+			return nil
+		}
+
 		sidecarConfigs := lo.Map(it.Spec.Sidecars, func(x *api.Sidecar, _ int) *api.SidecarConfig {
 			return x.Config()
 		})
@@ -854,6 +902,24 @@ func (w *Worker) deploymentRemoveK8SResource(ctx context.Context, it *api.Deploy
 
 	var err error
 	switch it.Type {
+	case api.DeploymentTypeStatic:
+		// Static deployments only ever created the two default-URL Ingresses
+		// (no Deployment/Service/HPA/PVC/ConfigMap). Remove just those and
+		// return early — both deletes are delete-if-exists (no-op on NotFound),
+		// so tearing down a deployment that only had ingresses can't error.
+		err = w.Client.DeleteIngress(ctx, id)
+		if err != nil {
+			slog.Error("deployment: deleting ingress error", "id", it.ID, "error", err)
+			return err
+		}
+
+		err = w.Client.DeleteIngress(ctx, id+"-internal")
+		if err != nil {
+			slog.Error("deployment: deleting internal ingress error", "id", it.ID, "error", err)
+			return err
+		}
+
+		return nil
 	case api.DeploymentTypeWebService:
 		err = w.Client.DeleteDeployment(ctx, id)
 		if err != nil {
@@ -1016,6 +1082,15 @@ func (w *Worker) routeCreate(ctx context.Context, it *api.DeployerCommandRouteCr
 		}
 		switch {
 		case strings.HasPrefix(it.Target, "deployment://"):
+			// NOTE (follow-up, SPEC §6.6): a deployment:// route to a Static
+			// deployment is NOT yet resolved to the shared static-gateway. A
+			// Static deployment has no per-deployment Service, so this path
+			// would point the Ingress at a non-existent Service and 503. The
+			// fix (set Service/UpstreamHost=static-gateway + the release prefix
+			// in upstream-path, like the default URL) needs the apiserver to
+			// carry the target's type + site prefix on the route-create command
+			// (targetType/targetSitePrefix) and is a separate PR. Left
+			// unchanged here for non-Static (WebService) targets.
 			ing.Service = resourceID(it.ProjectID, strings.TrimPrefix(it.Target, "deployment://"))
 		case strings.HasPrefix(it.Target, "ipfs://"):
 			ing.Service = "ipfs-gateway"
@@ -1499,6 +1574,36 @@ func deploymentHost(displayName, name string, projectID int64) string {
 		return h
 	}
 	return resourceID(projectID, name)
+}
+
+// staticSitePrefix returns the release prefix the static-gateway serves a
+// Static deployment from, used as the Ingress upstream-path (with a leading
+// "/" added by the caller). The apiserver already computes this as
+// `<project>/<name>/<release-sha>` and sends it in Spec.SitePrefix, so we use
+// that verbatim. As a defensive fallback (older apiservers that send only
+// Spec.Site), we derive the same `<project>/<name>/<release-sha>` from the
+// site ref `site://<bucket>/<project>/<name>@<release-sha>`.
+func staticSitePrefix(it *api.DeployerCommandDeploymentDeploy) string {
+	if it.Spec.SitePrefix != "" {
+		return strings.Trim(it.Spec.SitePrefix, "/")
+	}
+
+	// fallback: parse `site://<bucket>/<project>/<name>@<release-sha>`
+	ref := strings.TrimPrefix(it.Spec.Site, "site://")
+	at := strings.LastIndex(ref, "@")
+	if at < 0 {
+		return ""
+	}
+	release := ref[at+1:]
+	pathPart := ref[:at] // <bucket>/<project>/<name>
+	segs := strings.Split(strings.Trim(pathPart, "/"), "/")
+	if len(segs) < 3 || release == "" {
+		return ""
+	}
+	// drop the bucket; keep <project>/<name>
+	project := segs[len(segs)-2]
+	name := segs[len(segs)-1]
+	return project + "/" + name + "/" + release
 }
 
 // parseExternalHTTPTarget parses an http://<ip>[:port] external route target
