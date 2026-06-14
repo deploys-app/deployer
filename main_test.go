@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/deploys-app/api"
@@ -74,4 +75,66 @@ func TestStaticSitePrefix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAccessForwardAuth covers the pure helper that synthesizes the forward-auth
+// config threaded onto a deployment's PUBLIC default-URL ingress when Deployment
+// Access is enabled. The reconcile/CreateIngress path is not unit-testable here
+// (no fake clientset seam — see TestStaticSitePrefix), so this is the unit under
+// test: nil when access is off/absent, correct Target/headers when on.
+func TestAccessForwardAuth(t *testing.T) {
+	t.Parallel()
+
+	w := &Worker{AccessVerifyURL: "https://access.deploys.app/verify"}
+
+	t.Run("nil when access absent", func(t *testing.T) {
+		t.Parallel()
+		it := &api.DeployerCommandDeploymentDeploy{ID: 42}
+		if got := w.accessForwardAuth(it); got != nil {
+			t.Fatalf("accessForwardAuth() = %+v, want nil", got)
+		}
+	})
+
+	t.Run("nil when require login off", func(t *testing.T) {
+		t.Parallel()
+		it := &api.DeployerCommandDeploymentDeploy{
+			ID: 42,
+			Spec: api.DeployerCommandDeploymentDeploySpec{
+				Access: &api.DeploymentAccessConfig{
+					RequireGoogleLogin: false,
+					AllowedDomains:     []string{"acme.com"},
+				},
+			},
+		}
+		if got := w.accessForwardAuth(it); got != nil {
+			t.Fatalf("accessForwardAuth() = %+v, want nil", got)
+		}
+	})
+
+	t.Run("forward-auth when require login on", func(t *testing.T) {
+		t.Parallel()
+		it := &api.DeployerCommandDeploymentDeploy{
+			ID: 12345,
+			Spec: api.DeployerCommandDeploymentDeploySpec{
+				Access: &api.DeploymentAccessConfig{
+					RequireGoogleLogin: true,
+					AllowedEmails:      []string{"alice@acme.com"},
+				},
+			},
+		}
+
+		got := w.accessForwardAuth(it)
+		if got == nil {
+			t.Fatal("accessForwardAuth() = nil, want forward-auth config")
+		}
+		if want := "https://access.deploys.app/verify?d=12345"; got.Target != want {
+			t.Fatalf("Target = %q, want %q", got.Target, want)
+		}
+		if want := []string{"Cookie"}; !reflect.DeepEqual(got.AuthRequestHeaders, want) {
+			t.Fatalf("AuthRequestHeaders = %v, want %v", got.AuthRequestHeaders, want)
+		}
+		if want := []string{"X-Auth-Email", "X-Auth-User"}; !reflect.DeepEqual(got.AuthResponseHeaders, want) {
+			t.Fatalf("AuthResponseHeaders = %v, want %v", got.AuthResponseHeaders, want)
+		}
+	})
 }
