@@ -1166,15 +1166,19 @@ func (w *Worker) routeCreate(ctx context.Context, it *api.DeployerCommandRouteCr
 		}
 		switch {
 		case strings.HasPrefix(it.Target, "deployment://"):
-			// NOTE (follow-up, SPEC §6.6): a deployment:// route to a Static
-			// deployment is NOT yet resolved to the shared static-gateway. A
-			// Static deployment has no per-deployment Service, so this path
-			// would point the Ingress at a non-existent Service and 503. The
-			// fix (set Service/UpstreamHost=static-gateway + the release prefix
-			// in upstream-path, like the default URL) needs the apiserver to
-			// carry the target's type + site prefix on the route-create command
-			// (targetType/targetSitePrefix) and is a separate PR. Left
-			// unchanged here for non-Static (WebService) targets.
+			if it.TargetType == api.DeploymentTypeStatic {
+				// A Static deployment has no per-deployment Service — it is
+				// served by the shared static-gateway reading the release from
+				// object storage. Back the ingress with static-gateway and put
+				// the release prefix in upstream-path, mirroring the static
+				// deployment's own default-URL ingress (see the
+				// DeploymentTypeStatic branch in deploymentDeploy). The apiserver
+				// supplies the prefix as SitePrefix on the route-create command.
+				ing.Service = "static-gateway"
+				ing.UpstreamHost = "static-gateway"
+				ing.UpstreamPath = "/" + strings.Trim(it.SitePrefix, "/")
+				break
+			}
 			ing.Service = resourceID(it.ProjectID, strings.TrimPrefix(it.Target, "deployment://"))
 		case strings.HasPrefix(it.Target, "ipfs://"):
 			ing.Service = "ipfs-gateway"
