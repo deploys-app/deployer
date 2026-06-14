@@ -34,6 +34,7 @@ func main() {
 	locationID := cfg.MustString("location")
 	projectID := cfg.String("project_id")
 	namespace := cfg.String("namespace")
+	deployerNamespace := cfg.String("deployer_namespace")
 	apiEndpoint := cfg.String("api_endpoint")
 
 	token := cfg.String("token")
@@ -126,14 +127,16 @@ func main() {
 	}).Deployer()
 
 	w := Worker{
-		Deployer:        deployer,
-		Client:          k8sClient,
-		RuntimeClass:    cfg.String("runtime_class"),
-		H2CP:            cfg.Bool("h2cp"),
-		Cert:            cfg.Bool("cert"),
-		CPULimit:        cfg.StringDefault("cpu_limit", defaultLimitCPU),
-		MemoryLimit:     cfg.StringDefault("memory_limit", defaultMemoryLimit),
-		AccessVerifyURL: cfg.StringDefault("access_verify_url", defaultAccessVerifyURL),
+		Deployer:          deployer,
+		Client:            k8sClient,
+		Namespace:         namespace,
+		DeployerNamespace: deployerNamespace,
+		RuntimeClass:      cfg.String("runtime_class"),
+		H2CP:              cfg.Bool("h2cp"),
+		Cert:              cfg.Bool("cert"),
+		CPULimit:          cfg.StringDefault("cpu_limit", defaultLimitCPU),
+		MemoryLimit:       cfg.StringDefault("memory_limit", defaultMemoryLimit),
+		AccessVerifyURL:   cfg.StringDefault("access_verify_url", defaultAccessVerifyURL),
 	}
 
 	stop := make(chan os.Signal, 1)
@@ -160,16 +163,31 @@ const (
 	// ingress is pointed at when a deployment enables Require Google login. The
 	// per-deployment numeric id is appended as ?d=<id> by accessForwardAuth.
 	defaultAccessVerifyURL = "https://access.deploys.app/verify"
+
+	// staticGatewayService is the shared Service name a Static deployment's
+	// ingress points at; staticGatewayPort is the port the static-gateway
+	// listens on (its PORT default). When DEPLOYER_NAMESPACE names a different
+	// namespace, the deployer ensures a same-named ExternalName Service aliasing
+	// to that namespace so the bare backend still resolves.
+	staticGatewayService = "static-gateway"
+	staticGatewayPort    = 8080
 )
 
 type Worker struct {
-	Deployer     api.Deployer
-	Client       *k8s.Client
-	RuntimeClass string
-	H2CP         bool
-	Cert         bool // manage cert using cert manager
-	CPULimit     string
-	MemoryLimit  string
+	Deployer  api.Deployer
+	Client    *k8s.Client
+	Namespace string // namespace deployments are created in (k8s client namespace)
+	// DeployerNamespace (env DEPLOYER_NAMESPACE) is the namespace the shared
+	// static-gateway runs in. Empty or equal to Namespace means the gateway is
+	// co-located with deployments and the bare Service name resolves directly;
+	// when it differs, a Static deploy ensures a `static-gateway` ExternalName
+	// Service in Namespace aliasing to the gateway in this namespace.
+	DeployerNamespace string
+	RuntimeClass      string
+	H2CP              bool
+	Cert              bool // manage cert using cert manager
+	CPULimit          string
+	MemoryLimit       string
 	// AccessVerifyURL is the base forward-auth target for Deployment Access
 	// (env ACCESS_VERIFY_URL, default defaultAccessVerifyURL). It gates the
 	// public default URL when Spec.Access.RequireGoogleLogin is set.
@@ -203,6 +221,24 @@ func (w *Worker) accessForwardAuth(it *api.DeployerCommandDeploymentDeploy) *api
 		AuthRequestHeaders:  []string{"Cookie"},
 		AuthResponseHeaders: []string{"X-Auth-Email", "X-Auth-User"},
 	}
+}
+
+// ensureStaticGatewayAlias makes the shared `static-gateway` Service resolvable
+// from the deployment namespace when the gateway runs in a different namespace
+// (DEPLOYER_NAMESPACE). A Static deployment's ingress backend references
+// `static-gateway` by bare name, which the parapet controller only resolves
+// within the ingress's own namespace; the ExternalName alias CNAMEs that bare
+// name to static-gateway.<DeployerNamespace>.svc.cluster.local.
+//
+// It is a no-op when DEPLOYER_NAMESPACE is empty or equals the deployment
+// namespace (the gateway is co-located, so the bare name already resolves — and
+// aliasing it to itself would be a DNS loop).
+func (w *Worker) ensureStaticGatewayAlias(ctx context.Context) error {
+	if w.DeployerNamespace == "" || w.DeployerNamespace == w.Namespace {
+		return nil
+	}
+	target := staticGatewayService + "." + w.DeployerNamespace + ".svc.cluster.local"
+	return w.Client.EnsureExternalNameService(ctx, staticGatewayService, target, staticGatewayPort)
 }
 
 func (w *Worker) cpuLimit(limit string) string {
@@ -452,16 +488,25 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 		if it.Type == api.DeploymentTypeStatic {
 			upstreamPath := "/" + staticSitePrefix(it)
 
+			// When the static-gateway runs in another namespace
+			// (DEPLOYER_NAMESPACE), make its bare Service name resolve from the
+			// deployment namespace before the ingress references it. No-op when
+			// the gateway is co-located.
+			if err := w.ensureStaticGatewayAlias(ctx); err != nil {
+				slog.Error("deployment: ensuring static-gateway alias error", "id", it.ID, "error", err)
+				return err
+			}
+
 			// Static sites have no pod/Service — they are served by the shared
 			// static-gateway — so there is no internal (parapet-internal)
 			// ingress, only the public default URL.
 			err := w.Client.CreateIngress(ctx, k8s.Ingress{
 				ID:           id,
-				Service:      "static-gateway",
+				Service:      staticGatewayService,
 				ProjectID:    projectID,
 				Domain:       fmt.Sprintf("%s%s", host, w.location.DomainSuffix),
 				Path:         "/",
-				UpstreamHost: "static-gateway",
+				UpstreamHost: staticGatewayService,
 				UpstreamPath: upstreamPath,
 				// Deployment Access: gate the public default URL when Require
 				// Google login is on. Static has no internal ingress, so this
