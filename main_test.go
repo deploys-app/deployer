@@ -78,10 +78,11 @@ func TestStaticSitePrefix(t *testing.T) {
 }
 
 // TestAccessForwardAuth covers the pure helper that synthesizes the forward-auth
-// config threaded onto a deployment's PUBLIC default-URL ingress when Deployment
-// Access is enabled. The reconcile/CreateIngress path is not unit-testable here
-// (no fake clientset seam — see TestStaticSitePrefix), so this is the unit under
-// test: nil when access is off/absent, correct Target/headers when on.
+// config gating a host with Deployment Access — used for a deployment's PUBLIC
+// default-URL ingress and for custom-domain routes targeting it. The
+// reconcile/CreateIngress path is not unit-testable here (no fake clientset seam
+// — see TestStaticSitePrefix), so this is the unit under test: nil when access
+// is off/absent, correct Target/headers when on.
 func TestAccessForwardAuth(t *testing.T) {
 	t.Parallel()
 
@@ -89,41 +90,30 @@ func TestAccessForwardAuth(t *testing.T) {
 
 	t.Run("nil when access absent", func(t *testing.T) {
 		t.Parallel()
-		it := &api.DeployerCommandDeploymentDeploy{ID: 42}
-		if got := w.accessForwardAuth(it); got != nil {
+		if got := w.accessForwardAuth(42, nil); got != nil {
 			t.Fatalf("accessForwardAuth() = %+v, want nil", got)
 		}
 	})
 
 	t.Run("nil when require login off", func(t *testing.T) {
 		t.Parallel()
-		it := &api.DeployerCommandDeploymentDeploy{
-			ID: 42,
-			Spec: api.DeployerCommandDeploymentDeploySpec{
-				Access: &api.DeploymentAccessConfig{
-					RequireGoogleLogin: false,
-					AllowedDomains:     []string{"acme.com"},
-				},
-			},
+		access := &api.DeploymentAccessConfig{
+			RequireGoogleLogin: false,
+			AllowedDomains:     []string{"acme.com"},
 		}
-		if got := w.accessForwardAuth(it); got != nil {
+		if got := w.accessForwardAuth(42, access); got != nil {
 			t.Fatalf("accessForwardAuth() = %+v, want nil", got)
 		}
 	})
 
 	t.Run("forward-auth when require login on", func(t *testing.T) {
 		t.Parallel()
-		it := &api.DeployerCommandDeploymentDeploy{
-			ID: 12345,
-			Spec: api.DeployerCommandDeploymentDeploySpec{
-				Access: &api.DeploymentAccessConfig{
-					RequireGoogleLogin: true,
-					AllowedEmails:      []string{"alice@acme.com"},
-				},
-			},
+		access := &api.DeploymentAccessConfig{
+			RequireGoogleLogin: true,
+			AllowedEmails:      []string{"alice@acme.com"},
 		}
 
-		got := w.accessForwardAuth(it)
+		got := w.accessForwardAuth(12345, access)
 		if got == nil {
 			t.Fatal("accessForwardAuth() = nil, want forward-auth config")
 		}

@@ -198,26 +198,27 @@ type Worker struct {
 	results  []*api.DeployerSetResultItem
 }
 
-// accessForwardAuth synthesizes the forward-auth config for a deployment's
-// public default-URL ingress when Deployment Access is enabled. It returns nil
-// when access is off or absent, so the public ingress stays ungated and public.
+// accessForwardAuth synthesizes the forward-auth config that gates a host with
+// Deployment Access. It returns nil when access is off or absent, so the host
+// stays ungated and public.
 //
 // When enabled it points parapet's in-cluster ForwardAuth at the access
-// verifier, scoped to this deployment by its numeric command id (it.ID), which
-// is exactly what the apiserver's /internal/access/policy?d= resolves. The
-// resulting *api.RouteConfigForwardAuth is set on k8s.Ingress.Config.ForwardAuth
-// so CreateIngress emits the identical parapet.moonrhythm.io/forward-auth
-// annotation it already emits for route forward-auth.
+// verifier, scoped to the gated deployment by its numeric id (deploymentID),
+// which is exactly what the verifier's /verify?d= resolves. The resulting
+// *api.RouteConfigForwardAuth is set on k8s.Ingress.Config.ForwardAuth so
+// CreateIngress emits the parapet.moonrhythm.io/forward-auth annotation it
+// already emits for user route forward-auth.
 //
-// Phase 1 wires this onto the PUBLIC ingress only (WebService external + Static
-// branch); the internal (parapet-internal) ingress, route ingresses, and
-// redirect ingresses are left ungated.
-func (w *Worker) accessForwardAuth(it *api.DeployerCommandDeploymentDeploy) *api.RouteConfigForwardAuth {
-	if it.Spec.Access == nil || !it.Spec.Access.RequireGoogleLogin {
+// It gates a deployment's PUBLIC default URL (WebService external + Static
+// branch) and any user-created custom-domain route that targets the deployment
+// (routeCreate passes the target deployment's id + access policy). The internal
+// (parapet-internal) ingress and redirect routes are left ungated.
+func (w *Worker) accessForwardAuth(deploymentID int64, access *api.DeploymentAccessConfig) *api.RouteConfigForwardAuth {
+	if access == nil || !access.RequireGoogleLogin {
 		return nil
 	}
 	return &api.RouteConfigForwardAuth{
-		Target:              w.AccessVerifyURL + "?d=" + strconv.FormatInt(it.ID, 10),
+		Target:              w.AccessVerifyURL + "?d=" + strconv.FormatInt(deploymentID, 10),
 		AuthRequestHeaders:  []string{"Cookie"},
 		AuthResponseHeaders: []string{"X-Auth-Email", "X-Auth-User"},
 	}
@@ -511,7 +512,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				// Deployment Access: gate the public default URL when Require
 				// Google login is on. Static has no internal ingress, so this
 				// public ingress is the only surface to gate.
-				Config: api.RouteConfig{ForwardAuth: w.accessForwardAuth(it)},
+				Config: api.RouteConfig{ForwardAuth: w.accessForwardAuth(it.ID, it.Spec.Access)},
 			})
 			if err != nil {
 				slog.Error("deployment: creating external ingress error", "id", it.ID, "error", err)
@@ -630,7 +631,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					// Deployment Access: gate the public default URL when
 					// Require Google login is on. The internal ingress above is
 					// left ungated per spec §10.
-					Config: api.RouteConfig{ForwardAuth: w.accessForwardAuth(it)},
+					Config: api.RouteConfig{ForwardAuth: w.accessForwardAuth(it.ID, it.Spec.Access)},
 				})
 				if err != nil {
 					slog.Error("deployment: creating external ingress error", "id", it.ID, "error", err)
@@ -1166,6 +1167,20 @@ func (w *Worker) routeCreate(ctx context.Context, it *api.DeployerCommandRouteCr
 		}
 		switch {
 		case strings.HasPrefix(it.Target, "deployment://"):
+			// Deployment Access: when the target deployment is gated, stamp the
+			// same forward-auth gate as its default-URL ingress (.../verify?d=<id>).
+			// parapet allows only one forward-auth per ingress, so the access gate
+			// takes precedence over a user-supplied route forward-auth — it is a
+			// security control, not an app-level one. When access is off this is
+			// nil and the route's own Config (set above) stands, so toggling access
+			// off restores any user forward-auth and clears the gate annotation.
+			if fa := w.accessForwardAuth(it.TargetDeploymentID, it.Access); fa != nil {
+				if it.Config.ForwardAuth != nil {
+					slog.Warn("route: deployment access overrides route forward-auth",
+						"id", it.ID, "domain", it.Domain)
+				}
+				ing.Config.ForwardAuth = fa
+			}
 			if it.TargetType == api.DeploymentTypeStatic {
 				// A Static deployment has no per-deployment Service — it is
 				// served by the shared static-gateway reading the release from
