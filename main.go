@@ -302,6 +302,14 @@ func (w *Worker) Run() {
 			x := x.WAFDelete
 			w.wafDelete(ctx, x)
 			forceFlush = true
+		case x.CacheSet != nil:
+			x := x.CacheSet
+			w.cacheSet(ctx, x)
+			forceFlush = true
+		case x.CacheDelete != nil:
+			x := x.CacheDelete
+			w.cacheDelete(ctx, x)
+			forceFlush = true
 		case x.DomainCertCreate != nil:
 			x := x.DomainCertCreate
 			w.domainCertCreate(ctx, x)
@@ -1222,6 +1230,46 @@ func (w *Worker) wafDelete(ctx context.Context, it *api.DeployerCommandWAFDelete
 
 	w.results = append(w.results, &api.DeployerSetResultItem{
 		WAFDelete: &api.DeployerSetResultItemGeneral{
+			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) cacheSet(ctx context.Context, it *api.DeployerCommandCacheSet) {
+	slog.Info("cache: setting", "id", it.ID, "zone", it.ZoneID)
+
+	projectID := idString(it.ProjectID)
+
+	err := w.Client.CreateCacheZone(ctx, projectID, it.ZoneID, it.Overrides)
+	if err != nil {
+		slog.Error("cache: setting error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("cache: set", "id", it.ID, "zone", it.ZoneID)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		CacheSet: &api.DeployerSetResultItemGeneral{
+			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) cacheDelete(ctx context.Context, it *api.DeployerCommandCacheDelete) {
+	slog.Info("cache: deleting", "id", it.ID, "zone", it.ZoneID)
+
+	projectID := idString(it.ProjectID)
+
+	err := w.Client.DeleteCacheZone(ctx, projectID, it.ZoneID)
+	if err != nil {
+		slog.Error("cache: deleting error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("cache: deleted", "id", it.ID, "zone", it.ZoneID)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		CacheDelete: &api.DeployerSetResultItemGeneral{
 			ID: it.ID,
 		},
 	})
