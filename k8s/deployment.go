@@ -376,7 +376,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 			MountPath: obj.Disk.MountPath,
 			SubPath:   obj.Disk.SubPath,
 		})
-		deploy.Spec.Template.Spec.SecurityContext = securityContext()
+		// deploy.Spec.Template.Spec.SecurityContext = securityContext()
 	}
 	deploy.Spec.Template.Spec.Containers = []v1.Container{app}
 	deploy.Spec.Template.Spec.ServiceAccountName = obj.SA
