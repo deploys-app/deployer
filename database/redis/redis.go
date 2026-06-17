@@ -92,10 +92,7 @@ func (d *Deployer) Deploy(ctx context.Context, r Config) error {
 			return err
 		}
 
-		overhead := r.DBSize * 5 / 100
-		if overhead < 32 {
-			overhead = 32
-		}
+		overhead := max(r.DBSize*5/100, 32)
 		memory := fmt.Sprintf("%dMi", r.DBSize+overhead)
 
 		args := []string{

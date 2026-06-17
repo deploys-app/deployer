@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -110,9 +111,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 	if obj.Annotations == nil {
 		obj.Annotations = map[string]string{}
 	}
-	for k, v := range annotations {
-		obj.Annotations[k] = v
-	}
+	maps.Copy(obj.Annotations, annotations)
 
 	if obj.Env == nil {
 		obj.Env = make(Env)
