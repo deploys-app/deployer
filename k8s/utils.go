@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"maps"
 	"strings"
 	"time"
 
@@ -40,9 +41,7 @@ type Disk struct {
 
 func cloneLabels(l map[string]string) map[string]string {
 	r := make(map[string]string)
-	for k, v := range l {
-		r[k] = v
-	}
+	maps.Copy(r, l)
 	return r
 }
 

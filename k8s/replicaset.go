@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"time"
 
@@ -62,9 +63,7 @@ func (c *Client) CreateReplicaSet(ctx context.Context, obj ReplicaSet) error {
 	if obj.Annotations == nil {
 		obj.Annotations = map[string]string{}
 	}
-	for k, v := range annotations {
-		obj.Annotations[k] = v
-	}
+	maps.Copy(obj.Annotations, annotations)
 
 	if obj.Env == nil {
 		obj.Env = make(Env)
