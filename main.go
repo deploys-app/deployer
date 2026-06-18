@@ -1391,17 +1391,19 @@ func (w *Worker) domainCertCreate(ctx context.Context, it *api.DeployerCommandDo
 
 	if !w.Cert {
 		slog.Info("domain cert: skip (disabled)", "id", it.ID, "domain", it.Domain)
-		// Still report success so the apiserver advances cert_status —
-		// otherwise the deployer-poll loops forever on a clean cluster.
+		// Report ready so the apiserver advances cert_status — a clean cluster
+		// (no cert-manager) has nothing to issue, so treat it as issued;
+		// otherwise the deployer-poll loops forever.
+		ready := true
 		w.results = append(w.results, &api.DeployerSetResultItem{
-			DomainCertCreate: &api.DeployerSetResultItemGeneral{ID: it.ID},
+			DomainCertCreate: &api.DeployerSetResultItemDomainCert{ID: it.ID, Ready: &ready},
 		})
 		return
 	}
 
 	certID := normalizeDomain(it.Domain)
 	projectID := idString(it.ProjectID)
-	err := w.Client.CreateCertificate(ctx, k8s.Certificate{
+	ready, err := w.Client.CreateCertificate(ctx, k8s.Certificate{
 		ID:        certID,
 		ProjectID: projectID,
 		Domain:    it.Domain,
@@ -1412,9 +1414,9 @@ func (w *Worker) domainCertCreate(ctx context.Context, it *api.DeployerCommandDo
 		return
 	}
 
-	slog.Info("domain cert: created", "id", it.ID)
+	slog.Info("domain cert: created", "id", it.ID, "ready", ready)
 	w.results = append(w.results, &api.DeployerSetResultItem{
-		DomainCertCreate: &api.DeployerSetResultItemGeneral{ID: it.ID},
+		DomainCertCreate: &api.DeployerSetResultItemDomainCert{ID: it.ID, Ready: &ready},
 	})
 }
 
