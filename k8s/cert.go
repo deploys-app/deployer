@@ -20,7 +20,12 @@ type Certificate struct {
 	Wildcard bool
 }
 
-func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) error {
+// CreateCertificate ensures the cert-manager Certificate exists (create or
+// idempotent update) and reports whether it has actually issued — its Ready
+// condition is True. A no-op spec re-apply doesn't reset cert-manager's status,
+// so the pre-apply Get reflects current issuance; a freshly-created cert is not
+// yet ready and reports false until cert-manager completes the order.
+func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) (ready bool, err error) {
 	s := c.certManagerClient.CertmanagerV1().Certificates(c.namespace)
 
 	cert, err := s.Get(ctx, obj.ID, metav1.GetOptions{})
@@ -28,8 +33,10 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) error {
 		err = nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
+
+	ready = certificateReady(cert)
 
 	labels := map[string]string{
 		"projectId": obj.ProjectID,
@@ -64,7 +71,21 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) error {
 	if errors.IsNotFound(err) {
 		_, err = s.Create(ctx, cert, metav1.CreateOptions{})
 	}
-	return err
+	return ready, err
+}
+
+// certificateReady reports whether the cert-manager Certificate's Ready
+// condition is True. A nil cert (not yet created) is not ready.
+func certificateReady(cert *v1.Certificate) bool {
+	if cert == nil {
+		return false
+	}
+	for _, cond := range cert.Status.Conditions {
+		if cond.Type == v1.CertificateConditionReady {
+			return cond.Status == cmmeta.ConditionTrue
+		}
+	}
+	return false
 }
 
 func (c *Client) DeleteCertificate(ctx context.Context, id string) error {

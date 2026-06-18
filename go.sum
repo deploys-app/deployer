@@ -49,6 +49,8 @@ github.com/deploys-app/api v0.0.0-20260614124343-40a24da9df2f h1:m5mb8+o92vvtZMm
 github.com/deploys-app/api v0.0.0-20260614124343-40a24da9df2f/go.mod h1:X70UJs5awlRV4Cmn0FPJAgEbn4N933K8YgSKc1y9aD8=
 github.com/deploys-app/api v0.0.0-20260614132408-e01ef7fdebef h1:Rk1Dws+36QmV+nT/HrVGamVsGlR2Uayra7QIMeT6Yek=
 github.com/deploys-app/api v0.0.0-20260614132408-e01ef7fdebef/go.mod h1:X70UJs5awlRV4Cmn0FPJAgEbn4N933K8YgSKc1y9aD8=
+github.com/deploys-app/api v0.0.0-20260618031618-484255ee19af h1:LZ88i52XsE6KUynjlq/PtdI4P8kBL/jOUBWiORGMcfQ=
+github.com/deploys-app/api v0.0.0-20260618031618-484255ee19af/go.mod h1:X70UJs5awlRV4Cmn0FPJAgEbn4N933K8YgSKc1y9aD8=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/rVNCu3HqELle0jiPLLBs70cWOduZpkS1E78=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
