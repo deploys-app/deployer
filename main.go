@@ -519,6 +519,16 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				return err
 			}
 
+			// Reconcile the immutable per-release Ingresses (B2) alongside the
+			// always-current default URL above. Best-effort: the per-release URLs
+			// are a secondary surface (the default URL above IS the user's
+			// deployment), so a reconcile failure — logged with specifics inside —
+			// must not fail the deploy. The set is reconciled again on every
+			// deploy, so it self-heals on the next one.
+			if err := w.reconcilePinnedReleaseIngresses(ctx, it, id, projectID); err != nil {
+				slog.Error("deployment: reconciling pinned ingresses error", "id", it.ID, "error", err)
+			}
+
 			result.Success = true
 			return nil
 		}
@@ -1002,6 +1012,22 @@ func (w *Worker) deploymentRemoveK8SResource(ctx context.Context, it *api.Deploy
 		if err != nil {
 			slog.Error("deployment: deleting internal ingress error", "id", it.ID, "error", err)
 			return err
+		}
+
+		// Drop every release-pinned Ingress (<id>-rel-*) so TTL expiry and
+		// explicit delete tear down the immutable per-release URLs with the
+		// deployment (SPEC-preview-environments.md §B.3).
+		projectID := idString(it.ProjectID)
+		pinned, err := w.Client.ListPinnedIngressIDs(ctx, id, projectID)
+		if err != nil {
+			slog.Error("deployment: listing pinned ingresses error", "id", it.ID, "error", err)
+			return err
+		}
+		for _, pinID := range pinned {
+			if err = w.Client.DeleteIngress(ctx, pinID); err != nil {
+				slog.Error("deployment: deleting pinned ingress error", "id", it.ID, "ingress", pinID, "error", err)
+				return err
+			}
 		}
 
 		return nil
@@ -1721,6 +1747,33 @@ func deploymentHost(displayName, name string, projectID int64) string {
 	return resourceID(projectID, name)
 }
 
+// releaseHostShaLen is the number of leading hex chars of a release-sha embedded
+// in a Static deployment's immutable per-release URL host label. MUST match the
+// apiserver's release8Len (server/deployment_model.go).
+const releaseHostShaLen = 8
+
+// releaseHost is the first DNS label of a Static deployment's immutable
+// per-release URL (`<host>-<release8>.<region>.deploys.app`). Like deploymentHost
+// it prefers the friendly display name (`<displayName>-<release8>-<projectID>`)
+// and falls back to the id-based resource name when the display-name host would
+// overflow the 63-char DNS label limit. Mirrors the apiserver's releaseHost
+// (server/deployment_model.go) byte-for-byte so the URL the apiserver reports and
+// the pinned-ingress host the deployer creates agree; keep the two in sync
+// (SPEC-preview-environments.md §B.1).
+func releaseHost(displayName, name string, projectID int64, releaseSHA string) string {
+	if displayName == "" {
+		displayName = name
+	}
+	r := releaseSHA
+	if len(r) > releaseHostShaLen {
+		r = r[:releaseHostShaLen]
+	}
+	if h := fmt.Sprintf("%s-%s-%d", displayName, r, projectID); len(h) <= 63 {
+		return h
+	}
+	return fmt.Sprintf("%s-%s-%d", name, r, projectID)
+}
+
 // staticSitePrefix returns the release prefix the static-gateway serves a
 // Static deployment from, used as the Ingress upstream-path (with a leading
 // "/" added by the caller). The apiserver already computes this as
@@ -1749,6 +1802,92 @@ func staticSitePrefix(it *api.DeployerCommandDeploymentDeploy) string {
 	project := segs[len(segs)-2]
 	name := segs[len(segs)-1]
 	return project + "/" + name + "/" + release
+}
+
+// reconcilePinnedReleaseIngresses brings the Static deployment's set of immutable
+// per-release Ingresses in line with it.Spec.RetainedSiteRefs (B2): it creates
+// one Ingress per retained release-sha — named `<id>-rel-<release8>`, host via
+// releaseHost, upstream-path pinned to that exact content-addressed release — and
+// deletes any existing `<id>-rel-*` Ingress whose sha has dropped out of the
+// retained set. Pruning therefore happens on the next deploy, when a new revision
+// pushes the oldest sha past the retention bound; there is no GC→deployer signal,
+// so this reconcile is the only channel that removes a stale pinned Ingress.
+//
+// Because the retained set == the apiserver/siteGC live set, a pinned URL's
+// release is always live while its Ingress exists, and vice versa
+// (SPEC-preview-environments.md §B.3). Each pinned Ingress inherits the
+// deployment's access policy: public for a public deployment, but gated by the
+// same "Require Google login" forward-auth as the default URL when the
+// deployment opted into Deployment Access — a per-release URL must never be an
+// ungated mirror of gated content.
+func (w *Worker) reconcilePinnedReleaseIngresses(ctx context.Context, it *api.DeployerCommandDeploymentDeploy, id, projectID string) error {
+	// "<project>/<name>" — the release-prefix base shared by every revision.
+	base := staticSitePrefix(it)
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[:i]
+	}
+	if base == "" {
+		// Malformed/empty site prefix: can't form valid upstream-paths, so leave
+		// any existing pinned Ingresses untouched rather than reconcile blindly.
+		return nil
+	}
+
+	want := make(map[string]string, len(it.Spec.RetainedSiteRefs)) // pinned id -> full sha
+	for _, sha := range it.Spec.RetainedSiteRefs {
+		if sha == "" {
+			continue
+		}
+		r8 := sha
+		if len(r8) > releaseHostShaLen {
+			r8 = r8[:releaseHostShaLen]
+		}
+		want[id+"-rel-"+r8] = sha
+	}
+
+	for pinID, sha := range want {
+		relHost := releaseHost(it.DisplayName, it.Name, it.ProjectID, sha)
+		err := w.Client.CreateIngress(ctx, k8s.Ingress{
+			ID:           pinID,
+			Service:      staticGatewayService,
+			ProjectID:    projectID,
+			Domain:       fmt.Sprintf("%s%s", relHost, w.location.DomainSuffix),
+			Path:         "/",
+			UpstreamHost: staticGatewayService,
+			UpstreamPath: "/" + base + "/" + sha,
+			// Tag with the parent deployment id so the pinned set is selected by
+			// an exact label (ListPinnedIngressIDs), never a name-prefix scan.
+			Labels: map[string]string{k8s.PinnedIngressDeploymentLabel: id},
+			// Inherit the deployment's access policy, exactly like the default URL
+			// above. A public deployment (Access nil / RequireGoogleLogin false)
+			// yields no gate, so the per-release URL is public — but a deployment
+			// that opted into "Require Google login" to keep its content private
+			// MUST gate its per-release URLs too, or they'd be an ungated mirror of
+			// gated content. The verifier is scoped by deployment id (?d=<id>), so
+			// the same gate applies to every release pin of this deployment.
+			Config: api.RouteConfig{ForwardAuth: w.accessForwardAuth(it.ID, it.Spec.Access)},
+		})
+		if err != nil {
+			slog.Error("deployment: creating pinned ingress error", "id", it.ID, "ingress", pinID, "error", err)
+			return err
+		}
+	}
+
+	// Delete pinned Ingresses whose sha is no longer retained.
+	existing, err := w.Client.ListPinnedIngressIDs(ctx, id, projectID)
+	if err != nil {
+		slog.Error("deployment: listing pinned ingresses error", "id", it.ID, "error", err)
+		return err
+	}
+	for _, pinID := range existing {
+		if _, ok := want[pinID]; ok {
+			continue
+		}
+		if err := w.Client.DeleteIngress(ctx, pinID); err != nil {
+			slog.Error("deployment: deleting stale pinned ingress error", "id", it.ID, "ingress", pinID, "error", err)
+			return err
+		}
+	}
+	return nil
 }
 
 // parseExternalHTTPTarget parses an http://<ip>[:port] external route target

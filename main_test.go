@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/deploys-app/api"
@@ -72,6 +73,47 @@ func TestStaticSitePrefix(t *testing.T) {
 			got := staticSitePrefix(it)
 			if got != tc.want {
 				t.Fatalf("staticSitePrefix() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReleaseHost asserts the immutable per-release URL host label (B2). The
+// first four cases MUST match the apiserver's TestReleaseHost byte-for-byte
+// (server/deployment_test.go): the apiserver reports the per-release URL and the
+// deployer creates the matching pinned-ingress host, so the two helpers must
+// agree exactly. The last case covers the deployer-only legacy fallback (empty
+// DisplayName → resource name).
+func TestReleaseHost(t *testing.T) {
+	t.Parallel()
+
+	const projectID = 486418960667672577 // 18 digits
+	const sha = "abcdef0123456789abcdef0123456789"
+	n35 := strings.Repeat("a", 35)
+	n36 := strings.Repeat("a", 36)
+
+	cases := []struct {
+		name        string
+		displayName string
+		kubeName    string
+		releaseSHA  string
+		want        string
+	}{
+		{"short display name", "myapp", "d123", sha, "myapp-abcdef01-486418960667672577"},
+		{"35-char name still fits (63)", n35, "d123", sha, n35 + "-abcdef01-486418960667672577"},
+		{"36-char name overflows to id host", n36, "d123", sha, "d123-abcdef01-486418960667672577"},
+		{"sha shorter than 8 used verbatim", "myapp", "d123", "abc", "myapp-abc-486418960667672577"},
+		{"empty display name falls back to name", "", "d123", sha, "d123-abcdef01-486418960667672577"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := releaseHost(tc.displayName, tc.kubeName, projectID, tc.releaseSHA)
+			if got != tc.want {
+				t.Fatalf("releaseHost(%q, %q, %d, %q) = %q, want %q",
+					tc.displayName, tc.kubeName, projectID, tc.releaseSHA, got, tc.want)
 			}
 		})
 	}
