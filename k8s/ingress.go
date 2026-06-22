@@ -25,6 +25,10 @@ type Ingress struct {
 	UpstreamPath string
 	Internal     bool
 	Config       api.RouteConfig
+	// Labels are extra object labels merged onto the default {id, projectId}.
+	// Used to tag release-pinned ingresses with their parent deployment so the
+	// set can be selected exactly (see ListPinnedIngressIDs).
+	Labels map[string]string
 }
 
 func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
@@ -127,13 +131,18 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		annotation[cacheZoneAnnotation] = zoneID
 	}
 
+	labels := map[string]string{
+		"id":        x.ID,
+		"projectId": x.ProjectID,
+	}
+	for k, v := range x.Labels {
+		labels[k] = v
+	}
+
 	ing := &networking.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: x.ID,
-			Labels: map[string]string{
-				"id":        x.ID,
-				"projectId": x.ProjectID,
-			},
+			Name:        x.ID,
+			Labels:      labels,
 			Annotations: annotation,
 		},
 		Spec: networking.IngressSpec{
@@ -274,4 +283,28 @@ func (c *Client) DeleteIngress(ctx context.Context, id string) error {
 		return nil
 	}
 	return err
+}
+
+// PinnedIngressDeploymentLabel tags a release-pinned ingress with its parent
+// deployment's resource id, so the whole pinned set can be selected exactly by
+// label (rather than by a name-prefix scan, which a deployment name could alias).
+const PinnedIngressDeploymentLabel = "deploymentId"
+
+// ListPinnedIngressIDs returns the names of a Static deployment's release-pinned
+// ingresses (the immutable per-release URLs): the ingresses labelled
+// deploymentId=<id> in this project. Only pinned ingresses carry that label, so
+// the selector is exact — the default-URL ingress and custom-domain routes are
+// never matched. Used to reconcile the set on deploy and tear it down on delete.
+func (c *Client) ListPinnedIngressIDs(ctx context.Context, deploymentID, projectID string) ([]string, error) {
+	res, err := c.client.NetworkingV1().Ingresses(c.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "projectId=" + projectID + "," + PinnedIngressDeploymentLabel + "=" + deploymentID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(res.Items))
+	for i := range res.Items {
+		ids = append(ids, res.Items[i].Name)
+	}
+	return ids, nil
 }
