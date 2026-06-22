@@ -1252,6 +1252,11 @@ func (w *Worker) routeCreate(ctx context.Context, it *api.DeployerCommandRouteCr
 				return
 			}
 			ing.Service = extID
+			// Optional Host-header override (RouteConfig.Host). External backends
+			// commonly virtual-host on Host; default is the original request Host.
+			if it.Config.Host != "" {
+				ing.UpstreamHost = it.Config.Host
+			}
 		}
 
 		err := w.Client.CreateIngress(ctx, ing)
