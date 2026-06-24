@@ -537,7 +537,8 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 			return x.Config()
 		})
 
-		configMapData, bindData := prepareMountData(it.Spec.MountData, sidecarMountData(sidecarConfigs))
+		configMapData, bindData, sidecarBinds := prepareMountData(it.Spec.MountData, sidecarConfigs)
+		sidecars := buildSidecars(sidecarConfigs, sidecarBinds)
 		cm := k8s.ConfigMap{
 			ID:        id,
 			ProjectID: projectID,
@@ -586,7 +587,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				BindConfigMap: bindData,
 				H2CP:          h2cp,
 				Protocol:      string(it.Spec.Protocol),
-				Sidecars:      sidecarConfigs,
+				Sidecars:      sidecars,
 				ForceSpot:     it.BillingConfig.ForceSpot,
 				HealthCheck:   it.Spec.HealthCheck,
 			}
@@ -698,7 +699,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					SubPath:   it.Spec.DiskSubPath,
 				},
 				BindConfigMap: bindData,
-				Sidecars:      sidecarConfigs,
+				Sidecars:      sidecars,
 				ForceSpot:     it.BillingConfig.ForceSpot,
 				HealthCheck:   it.Spec.HealthCheck,
 			}
@@ -757,7 +758,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					SubPath:   it.Spec.DiskSubPath,
 				},
 				BindConfigMap: bindData,
-				Sidecars:      sidecarConfigs,
+				Sidecars:      sidecars,
 			}
 
 			err = w.Client.CreateCronJob(ctx, cj)
@@ -796,7 +797,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					SubPath:   it.Spec.DiskSubPath,
 				},
 				BindConfigMap: bindData,
-				Sidecars:      sidecarConfigs,
+				Sidecars:      sidecars,
 				ForceSpot:     it.BillingConfig.ForceSpot,
 				HealthCheck:   it.Spec.HealthCheck,
 			}
@@ -859,7 +860,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					SubPath:   it.Spec.DiskSubPath,
 				},
 				BindConfigMap: bindData,
-				Sidecars:      sidecarConfigs,
+				Sidecars:      sidecars,
 				ForceSpot:     it.BillingConfig.ForceSpot,
 				HealthCheck:   it.Spec.HealthCheck,
 			}
@@ -1931,24 +1932,36 @@ func pullSecretResourceID(projectID int64, name string) string {
 	return fmt.Sprintf("pull-%s-%d", name, projectID)
 }
 
-func prepareMountData(mountData map[string]string, sidecarMountData []map[string]string) (configMapData map[string]string, bindData map[string]string) {
+// prepareMountData lays out every mounted file into a single config map with
+// globally unique keys, and splits the resulting key => path bindings between
+// the application container (bindData) and each sidecar (sidecarBinds, indexed
+// to match sidecars). Keeping each sidecar's bindings separate is required
+// because two sidecars may mount different files at the same path (for example
+// two cloud-sql-proxy sidecars both using /sidecar/cloudsqlproxy/credentials.json):
+// a mount path only has to be unique within a single container, but it must not
+// be mounted into a container it does not belong to.
+func prepareMountData(mountData map[string]string, sidecars []*api.SidecarConfig) (configMapData map[string]string, bindData map[string]string, sidecarBinds []map[string]string) {
 	type item struct {
-		key  string
-		path string
-		data string
+		key     string
+		path    string
+		data    string
+		sidecar int // index into sidecars, or -1 for the application container
 	}
 
 	var list []item
 	for path, data := range mountData {
-		list = append(list, item{path: path, data: data})
+		list = append(list, item{path: path, data: data, sidecar: -1})
 	}
-	for _, d := range sidecarMountData {
-		for path, data := range d {
-			list = append(list, item{path: path, data: data})
+	for i, s := range sidecars {
+		for path, data := range s.MountData {
+			list = append(list, item{path: path, data: data, sidecar: i})
 		}
 	}
 
 	sort.Slice(list, func(i, j int) bool {
+		if list[i].sidecar != list[j].sidecar {
+			return list[i].sidecar < list[j].sidecar
+		}
 		return list[i].path < list[j].path
 	})
 
@@ -1958,20 +1971,44 @@ func prepareMountData(mountData map[string]string, sidecarMountData []map[string
 
 	configMapData = make(map[string]string)
 	bindData = make(map[string]string)
+	sidecarBinds = make([]map[string]string, len(sidecars))
+	for i := range sidecarBinds {
+		sidecarBinds[i] = make(map[string]string)
+	}
 	for _, t := range list {
 		configMapData[t.key] = t.data
-		bindData[t.key] = t.path
+		if t.sidecar < 0 {
+			bindData[t.key] = t.path
+		} else {
+			sidecarBinds[t.sidecar][t.key] = t.path
+		}
 	}
 	return
 }
 
-func sidecarMountData(sidecar []*api.SidecarConfig) []map[string]string {
-	var rs []map[string]string
-	for _, x := range sidecar {
-		if len(x.MountData) == 0 {
-			continue
+// buildSidecars resolves sidecar configs into k8s sidecar specs, ensuring each
+// container has a unique name (multiple sidecars of the same kind, e.g. two
+// cloud-sql-proxy instances, otherwise share the name "cloudsql-proxy") and is
+// bound only to its own mounted files.
+func buildSidecars(configs []*api.SidecarConfig, binds []map[string]string) []k8s.Sidecar {
+	used := make(map[string]bool, len(configs))
+	out := make([]k8s.Sidecar, len(configs))
+	for i, c := range configs {
+		name := c.Name
+		for n := 1; used[name]; n++ {
+			name = fmt.Sprintf("%s-%d", c.Name, n)
 		}
-		rs = append(rs, x.MountData)
+		used[name] = true
+
+		out[i] = k8s.Sidecar{
+			Name:          name,
+			Image:         c.Image,
+			Env:           c.Env,
+			Command:       c.Command,
+			Args:          c.Args,
+			Port:          c.Port,
+			BindConfigMap: binds[i],
+		}
 	}
-	return rs
+	return out
 }

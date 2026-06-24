@@ -29,6 +29,19 @@ type PoolConfig struct {
 	Share bool
 }
 
+// Sidecar is a resolved sidecar container. Name is guaranteed unique within a
+// pod by the caller, and BindConfigMap holds only the config map files that
+// belong to this sidecar (key => mount path).
+type Sidecar struct {
+	Name          string
+	Image         string
+	Env           map[string]string
+	Command       []string
+	Args          []string
+	Port          *int
+	BindConfigMap map[string]string // key => file path
+}
+
 func (c *Client) GetDeployment(ctx context.Context, name string) (*appsv1.Deployment, error) {
 	return c.client.AppsV1().Deployments(c.namespace).Get(ctx, name, metav1.GetOptions{})
 }
@@ -80,7 +93,7 @@ type Deployment struct {
 	BindConfigMap map[string]string // key => file path
 	H2CP          bool
 	Protocol      string
-	Sidecars      []*api.SidecarConfig
+	Sidecars      []Sidecar
 	ForceSpot     bool
 	HealthCheck   api.DeploymentHealthCheck
 }
@@ -425,10 +438,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 				},
 			},
 		}
-		for key, path := range obj.BindConfigMap {
-			if !strings.HasPrefix(path, "/sidecar") {
-				continue
-			}
+		for key, path := range s.BindConfigMap {
 			container.VolumeMounts = append(container.VolumeMounts, v1.VolumeMount{
 				Name:      "config",
 				MountPath: path,

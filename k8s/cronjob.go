@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deploys-app/api"
 	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -41,7 +40,7 @@ type CronJob struct {
 	RuntimeClass  string
 	Pool          PoolConfig
 	BindConfigMap map[string]string // key => file path
-	Sidecars      []*api.SidecarConfig
+	Sidecars      []Sidecar
 }
 
 func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
@@ -219,10 +218,7 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 				},
 			},
 		}
-		for key, path := range obj.BindConfigMap {
-			if !strings.HasPrefix(path, "/sidecar") {
-				continue
-			}
+		for key, path := range s.BindConfigMap {
 			container.VolumeMounts = append(container.VolumeMounts, v1.VolumeMount{
 				Name:      "config",
 				MountPath: path,
