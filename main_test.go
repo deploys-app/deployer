@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/deploys-app/api"
+
+	"github.com/deploys-app/deployer/k8s"
 )
 
 // TestStaticSitePrefix asserts the release prefix the static-gateway serves a
@@ -169,4 +171,82 @@ func TestAccessForwardAuth(t *testing.T) {
 			t.Fatalf("AuthResponseHeaders = %v, want %v", got.AuthResponseHeaders, want)
 		}
 	})
+}
+
+// TestSidecarsTwoCloudSQLProxy guards against the apiserver rejecting a
+// Deployment that has two cloud-sql-proxy sidecars. Both sidecars share the
+// container name "cloudsql-proxy" and mount their credentials at the same path
+// (/sidecar/cloudsqlproxy/credentials.json), so without per-sidecar resolution
+// the spec ends up with a duplicate container name and, worse, every sidecar
+// mounting every sidecar's credentials file at the same path within one
+// container. This verifies names are made unique and each sidecar is bound only
+// to its own file.
+func TestSidecarsTwoCloudSQLProxy(t *testing.T) {
+	t.Parallel()
+
+	specSidecars := []*api.Sidecar{
+		{CloudSQLProxy: &api.CloudSQLProxySidecar{Instance: "proj:region:db1", Port: 3300, Credentials: "cred-1"}},
+		{CloudSQLProxy: &api.CloudSQLProxySidecar{Instance: "proj:region:db2", Port: 3301, Credentials: "cred-2"}},
+	}
+
+	configs := make([]*api.SidecarConfig, len(specSidecars))
+	for i, s := range specSidecars {
+		configs[i] = s.Config()
+	}
+
+	configMapData, bindData, sidecarBinds := prepareMountData(nil, configs)
+	sidecars := buildSidecars(configs, sidecarBinds)
+
+	if len(sidecars) != 2 {
+		t.Fatalf("len(sidecars) = %d, want 2", len(sidecars))
+	}
+
+	// Container names must be unique within the pod.
+	names := map[string]bool{}
+	for _, s := range sidecars {
+		if names[s.Name] {
+			t.Fatalf("duplicate sidecar name %q", s.Name)
+		}
+		names[s.Name] = true
+	}
+	if !names["cloudsql-proxy"] || !names["cloudsql-proxy-1"] {
+		t.Fatalf("unexpected sidecar names %v", names)
+	}
+
+	// No /sidecar files should leak into the application container's binds.
+	for _, path := range bindData {
+		if strings.HasPrefix(path, "/sidecar") {
+			t.Fatalf("application container bound to sidecar path %q", path)
+		}
+	}
+
+	// Each sidecar mounts exactly its own credentials file: a single mount at
+	// the shared path, pointing at a distinct config map key with this
+	// sidecar's data.
+	seenKeys := map[string]bool{}
+	for i, s := range sidecars {
+		if len(s.BindConfigMap) != 1 {
+			t.Fatalf("sidecar[%d] %q has %d binds, want 1: %v", i, s.Name, len(s.BindConfigMap), s.BindConfigMap)
+		}
+		mountPaths := map[string]bool{}
+		for key, path := range s.BindConfigMap {
+			if mountPaths[path] {
+				t.Fatalf("sidecar[%d] %q has duplicate mount path %q", i, s.Name, path)
+			}
+			mountPaths[path] = true
+			if path != "/sidecar/cloudsqlproxy/credentials.json" {
+				t.Fatalf("sidecar[%d] %q unexpected mount path %q", i, s.Name, path)
+			}
+			if seenKeys[key] {
+				t.Fatalf("config map key %q shared across sidecars", key)
+			}
+			seenKeys[key] = true
+			if want := "cred-" + map[int]string{0: "1", 1: "2"}[i]; configMapData[key] != want {
+				t.Fatalf("sidecar[%d] key %q data = %q, want %q", i, key, configMapData[key], want)
+			}
+		}
+	}
+
+	// The k8s field type carries through unchanged.
+	_ = []k8s.Sidecar(sidecars)
 }
