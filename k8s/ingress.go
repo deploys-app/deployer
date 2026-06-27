@@ -111,10 +111,10 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
-	// Bind to the project's WAF, ratelimit, and cache zones if they exist, so
-	// routes added after the zones were created are still covered. Best-effort: a
-	// lookup error must not fail ingress creation since these are best-effort
-	// relative to routing.
+	// Bind to the project's WAF, ratelimit, cache, and transform zones if they
+	// exist, so routes added after the zones were created are still covered.
+	// Best-effort: a lookup error must not fail ingress creation since these are
+	// best-effort relative to routing.
 	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
 		slog.Error("ingress: looking up waf zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
@@ -129,6 +129,11 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		slog.Error("ingress: looking up cache zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
 		annotation[cacheZoneAnnotation] = zoneID
+	}
+	if zoneID, err := c.transformZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up transform zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[transformZoneAnnotation] = zoneID
 	}
 
 	labels := map[string]string{
@@ -220,10 +225,10 @@ func (c *Client) CreateRedirectIngress(ctx context.Context, x RedirectIngress) e
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
-	// Bind to the project's WAF, ratelimit, and cache zones if they exist, so
-	// routes added after the zones were created are still covered. Best-effort: a
-	// lookup error must not fail ingress creation since these are best-effort
-	// relative to routing.
+	// Bind to the project's WAF, ratelimit, cache, and transform zones if they
+	// exist, so routes added after the zones were created are still covered.
+	// Best-effort: a lookup error must not fail ingress creation since these are
+	// best-effort relative to routing.
 	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
 		slog.Error("ingress: looking up waf zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
@@ -238,6 +243,11 @@ func (c *Client) CreateRedirectIngress(ctx context.Context, x RedirectIngress) e
 		slog.Error("ingress: looking up cache zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
 		annotation[cacheZoneAnnotation] = zoneID
+	}
+	if zoneID, err := c.transformZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up transform zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[transformZoneAnnotation] = zoneID
 	}
 
 	ing := &networking.Ingress{

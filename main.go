@@ -382,6 +382,14 @@ func (w *Worker) Run() {
 			x := x.CacheDelete
 			w.cacheDelete(ctx, x)
 			forceFlush = true
+		case x.TransformSet != nil:
+			x := x.TransformSet
+			w.transformSet(ctx, x)
+			forceFlush = true
+		case x.TransformDelete != nil:
+			x := x.TransformDelete
+			w.transformDelete(ctx, x)
+			forceFlush = true
 		case x.DomainCertCreate != nil:
 			x := x.DomainCertCreate
 			w.domainCertCreate(ctx, x)
@@ -1409,6 +1417,46 @@ func (w *Worker) cacheDelete(ctx context.Context, it *api.DeployerCommandCacheDe
 
 	w.results = append(w.results, &api.DeployerSetResultItem{
 		CacheDelete: &api.DeployerSetResultItemGeneral{
+			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) transformSet(ctx context.Context, it *api.DeployerCommandTransformSet) {
+	slog.Info("transform: setting", "id", it.ID, "zone", it.ZoneID)
+
+	projectID := idString(it.ProjectID)
+
+	err := w.Client.CreateTransformZone(ctx, projectID, it.ZoneID, it.Transforms)
+	if err != nil {
+		slog.Error("transform: setting error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("transform: set", "id", it.ID, "zone", it.ZoneID)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		TransformSet: &api.DeployerSetResultItemGeneral{
+			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) transformDelete(ctx context.Context, it *api.DeployerCommandTransformDelete) {
+	slog.Info("transform: deleting", "id", it.ID, "zone", it.ZoneID)
+
+	projectID := idString(it.ProjectID)
+
+	err := w.Client.DeleteTransformZone(ctx, projectID, it.ZoneID)
+	if err != nil {
+		slog.Error("transform: deleting error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("transform: deleted", "id", it.ID, "zone", it.ZoneID)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		TransformDelete: &api.DeployerSetResultItemGeneral{
 			ID: it.ID,
 		},
 	})
