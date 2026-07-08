@@ -40,6 +40,18 @@ type Sidecar struct {
 	Args          []string
 	Port          *int
 	BindConfigMap map[string]string // key => file path
+	// HealthCheck, when set, gates the app container on this sidecar via an HTTP
+	// GET startup probe. The caller assigns a pod-unique port and the sidecar
+	// serves the check on 0.0.0.0 so the kubelet can reach it on the pod IP —
+	// unlike the proxy's own loopback DB listener.
+	HealthCheck *SidecarHealthCheck
+}
+
+// SidecarHealthCheck describes an HTTP GET health endpoint a sidecar exposes on
+// the pod IP, used to build the app-gating startup probe.
+type SidecarHealthCheck struct {
+	Port int
+	Path string
 }
 
 func (c *Client) GetDeployment(ctx context.Context, name string) (*appsv1.Deployment, error) {
@@ -419,33 +431,14 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		})
 	}
 
+	// Sidecars run as native sidecar containers: init containers with an Always
+	// restart policy. Kubernetes starts them before the app container and, for
+	// sidecars that expose an HTTP health check, blocks the app container (via
+	// the startup probe in buildSidecarContainer) until the sidecar reports
+	// ready. Without this the app races its sidecar (e.g. cloud-sql-proxy on
+	// localhost:5432) and crash-loops when it wins.
 	for _, s := range obj.Sidecars {
-		container := v1.Container{
-			Name:            s.Name,
-			Image:           s.Image,
-			ImagePullPolicy: v1.PullIfNotPresent,
-			Env:             Env(s.Env).envVars(),
-			Command:         s.Command,
-			Args:            s.Args,
-			Ports: []v1.ContainerPort{
-				{
-					ContainerPort: int32(*s.Port),
-				},
-			},
-			Resources: v1.ResourceRequirements{
-				Requests: v1.ResourceList{
-					"cpu": resource.MustParse("0.001"),
-				},
-			},
-		}
-		for key, path := range s.BindConfigMap {
-			container.VolumeMounts = append(container.VolumeMounts, v1.VolumeMount{
-				Name:      "config",
-				MountPath: path,
-				SubPath:   key,
-			})
-		}
-		deploy.Spec.Template.Spec.Containers = append(deploy.Spec.Template.Spec.Containers, container)
+		deploy.Spec.Template.Spec.InitContainers = append(deploy.Spec.Template.Spec.InitContainers, buildSidecarContainer(s))
 	}
 
 	_, err = s.Update(ctx, deploy, metav1.UpdateOptions{})
@@ -453,6 +446,62 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		_, err = s.Create(ctx, deploy, metav1.CreateOptions{})
 	}
 	return err
+}
+
+// buildSidecarContainer renders a resolved Sidecar as a native sidecar
+// container: an init container with an Always restart policy so Kubernetes
+// starts it before, and tears it down after, the app container. When the
+// sidecar exposes an HTTP health check (HealthCheck != nil), an httpGet startup
+// probe holds the app container until the sidecar reports ready — native
+// ordering alone only waits for the container to start, not to serve. The probe
+// hits the sidecar on the pod IP, which is why the sidecar serves its health
+// endpoint on 0.0.0.0. PeriodSeconds * FailureThreshold caps that wait at ~60s.
+func buildSidecarContainer(s Sidecar) v1.Container {
+	restartPolicy := v1.ContainerRestartPolicyAlways
+	container := v1.Container{
+		Name:            s.Name,
+		Image:           s.Image,
+		ImagePullPolicy: v1.PullIfNotPresent,
+		RestartPolicy:   &restartPolicy,
+		Env:             Env(s.Env).envVars(),
+		Command:         s.Command,
+		Args:            s.Args,
+		Ports: []v1.ContainerPort{
+			{
+				ContainerPort: int32(*s.Port),
+			},
+		},
+		Resources: v1.ResourceRequirements{
+			Requests: v1.ResourceList{
+				"cpu": resource.MustParse("0.001"),
+			},
+		},
+	}
+	if hc := s.HealthCheck; hc != nil {
+		// Declared unnamed on purpose: the probe references it by number, and two
+		// sidecars would otherwise both name a port "health".
+		container.Ports = append(container.Ports, v1.ContainerPort{
+			ContainerPort: int32(hc.Port),
+		})
+		container.StartupProbe = &v1.Probe{
+			ProbeHandler: v1.ProbeHandler{
+				HTTPGet: &v1.HTTPGetAction{
+					Path: hc.Path,
+					Port: intstr.FromInt(hc.Port),
+				},
+			},
+			PeriodSeconds:    1,
+			FailureThreshold: 60,
+		}
+	}
+	for key, path := range s.BindConfigMap {
+		container.VolumeMounts = append(container.VolumeMounts, v1.VolumeMount{
+			Name:      "config",
+			MountPath: path,
+			SubPath:   key,
+		})
+	}
+	return container
 }
 
 func (obj *Deployment) displayName() string {
