@@ -2,10 +2,12 @@ package main
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/deploys-app/api"
+	"github.com/samber/lo"
 
 	"github.com/deploys-app/deployer/k8s"
 )
@@ -195,10 +197,38 @@ func TestSidecarsTwoCloudSQLProxy(t *testing.T) {
 	}
 
 	configMapData, bindData, sidecarBinds := prepareMountData(nil, configs)
-	sidecars := buildSidecars(configs, sidecarBinds)
+	// appPort 3300 deliberately collides with the first sidecar's DB port to
+	// prove health-port selection dodges it.
+	sidecars := buildSidecars(configs, sidecarBinds, 3300)
 
 	if len(sidecars) != 2 {
 		t.Fatalf("len(sidecars) = %d, want 2", len(sidecars))
+	}
+
+	// Each sidecar gets a native-sidecar startup gate: a health check on a
+	// pod-unique port that collides with neither DB port (3300/3301), the app
+	// port (3300), nor the other sidecar's health port. The --http-port flag and
+	// the probe port must agree.
+	seenHealth := map[int]bool{}
+	for i, s := range sidecars {
+		if s.HealthCheck == nil {
+			t.Fatalf("sidecar[%d] %q missing HealthCheck", i, s.Name)
+		}
+		hp := s.HealthCheck.Port
+		if hp == 3300 || hp == 3301 {
+			t.Fatalf("sidecar[%d] health port %d collides with a DB/app port", i, hp)
+		}
+		if seenHealth[hp] {
+			t.Fatalf("sidecar[%d] health port %d shared with another sidecar", i, hp)
+		}
+		seenHealth[hp] = true
+		if s.HealthCheck.Path != "/startup" {
+			t.Errorf("sidecar[%d] health path = %q, want /startup", i, s.HealthCheck.Path)
+		}
+		wantFlag := "--http-port=" + strconv.Itoa(hp)
+		if !lo.Contains(s.Args, wantFlag) {
+			t.Errorf("sidecar[%d] args %v missing %q", i, s.Args, wantFlag)
+		}
 	}
 
 	// Container names must be unique within the pod.

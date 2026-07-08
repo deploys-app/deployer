@@ -546,7 +546,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 		})
 
 		configMapData, bindData, sidecarBinds := prepareMountData(it.Spec.MountData, sidecarConfigs)
-		sidecars := buildSidecars(sidecarConfigs, sidecarBinds)
+		sidecars := buildSidecars(sidecarConfigs, sidecarBinds, it.Spec.Port)
 		cm := k8s.ConfigMap{
 			ID:        id,
 			ProjectID: projectID,
@@ -2037,8 +2037,34 @@ func prepareMountData(mountData map[string]string, sidecars []*api.SidecarConfig
 // buildSidecars resolves sidecar configs into k8s sidecar specs, ensuring each
 // container has a unique name (multiple sidecars of the same kind, e.g. two
 // cloud-sql-proxy instances, otherwise share the name "cloudsql-proxy") and is
-// bound only to its own mounted files.
-func buildSidecars(configs []*api.SidecarConfig, binds []map[string]string) []k8s.Sidecar {
+// bound only to its own mounted files. Sidecars that expose an HTTP health
+// check (HealthCheckPath set) get a pod-unique health port assigned here — the
+// --http-port flag and the startup-probe port must agree, and two proxies would
+// otherwise both default to :9090 and the second would fail to bind the shared
+// pod network namespace. appPort is the application container's port, excluded
+// from health-port selection for the same reason.
+func buildSidecars(configs []*api.SidecarConfig, binds []map[string]string, appPort int) []k8s.Sidecar {
+	// Seed the claimed-port set with the app port and every sidecar's DB
+	// listener before assigning any health port, so health ports dodge all of
+	// them and each other.
+	usedPorts := make(map[int]bool)
+	if appPort > 0 {
+		usedPorts[appPort] = true
+	}
+	for _, c := range configs {
+		if c.Port != nil {
+			usedPorts[*c.Port] = true
+		}
+	}
+	nextHealthPort := func() int {
+		p := 9090
+		for usedPorts[p] {
+			p++
+		}
+		usedPorts[p] = true
+		return p
+	}
+
 	used := make(map[string]bool, len(configs))
 	out := make([]k8s.Sidecar, len(configs))
 	for i, c := range configs {
@@ -2048,7 +2074,7 @@ func buildSidecars(configs []*api.SidecarConfig, binds []map[string]string) []k8
 		}
 		used[name] = true
 
-		out[i] = k8s.Sidecar{
+		s := k8s.Sidecar{
 			Name:          name,
 			Image:         c.Image,
 			Env:           c.Env,
@@ -2057,6 +2083,13 @@ func buildSidecars(configs []*api.SidecarConfig, binds []map[string]string) []k8
 			Port:          c.Port,
 			BindConfigMap: binds[i],
 		}
+		if c.HealthCheckPath != "" {
+			port := nextHealthPort()
+			// Copy before appending so the shared config's Args is never mutated.
+			s.Args = append(append([]string{}, c.Args...), "--http-port="+strconv.Itoa(port))
+			s.HealthCheck = &k8s.SidecarHealthCheck{Port: port, Path: c.HealthCheckPath}
+		}
+		out[i] = s
 	}
 	return out
 }
