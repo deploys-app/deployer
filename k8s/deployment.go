@@ -419,14 +419,33 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		})
 	}
 
-	// Sidecars run as native sidecar containers: init containers with an Always
-	// restart policy. Kubernetes starts them before the app container and, via
-	// the TCP startup probe in buildSidecarContainer, blocks the app container
-	// until the sidecar's port accepts connections. Without this the app races
-	// its sidecar (e.g. cloud-sql-proxy on localhost:5432) and crash-loops when
-	// it wins.
 	for _, s := range obj.Sidecars {
-		deploy.Spec.Template.Spec.InitContainers = append(deploy.Spec.Template.Spec.InitContainers, buildSidecarContainer(s))
+		container := v1.Container{
+			Name:            s.Name,
+			Image:           s.Image,
+			ImagePullPolicy: v1.PullIfNotPresent,
+			Env:             Env(s.Env).envVars(),
+			Command:         s.Command,
+			Args:            s.Args,
+			Ports: []v1.ContainerPort{
+				{
+					ContainerPort: int32(*s.Port),
+				},
+			},
+			Resources: v1.ResourceRequirements{
+				Requests: v1.ResourceList{
+					"cpu": resource.MustParse("0.001"),
+				},
+			},
+		}
+		for key, path := range s.BindConfigMap {
+			container.VolumeMounts = append(container.VolumeMounts, v1.VolumeMount{
+				Name:      "config",
+				MountPath: path,
+				SubPath:   key,
+			})
+		}
+		deploy.Spec.Template.Spec.Containers = append(deploy.Spec.Template.Spec.Containers, container)
 	}
 
 	_, err = s.Update(ctx, deploy, metav1.UpdateOptions{})
@@ -434,53 +453,6 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		_, err = s.Create(ctx, deploy, metav1.CreateOptions{})
 	}
 	return err
-}
-
-// buildSidecarContainer renders a resolved Sidecar as a native sidecar
-// container: an init container with an Always restart policy and a TCP startup
-// probe on its port. The restart policy is what makes Kubernetes treat it as a
-// long-lived sidecar (started before, and torn down after, the app container);
-// the startup probe is what makes Kubernetes hold the app container until the
-// sidecar's port is actually accepting connections. PeriodSeconds *
-// FailureThreshold caps that wait at ~60s.
-func buildSidecarContainer(s Sidecar) v1.Container {
-	restartPolicy := v1.ContainerRestartPolicyAlways
-	container := v1.Container{
-		Name:            s.Name,
-		Image:           s.Image,
-		ImagePullPolicy: v1.PullIfNotPresent,
-		RestartPolicy:   &restartPolicy,
-		Env:             Env(s.Env).envVars(),
-		Command:         s.Command,
-		Args:            s.Args,
-		Ports: []v1.ContainerPort{
-			{
-				ContainerPort: int32(*s.Port),
-			},
-		},
-		StartupProbe: &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt(*s.Port),
-				},
-			},
-			PeriodSeconds:    1,
-			FailureThreshold: 60,
-		},
-		Resources: v1.ResourceRequirements{
-			Requests: v1.ResourceList{
-				"cpu": resource.MustParse("0.001"),
-			},
-		},
-	}
-	for key, path := range s.BindConfigMap {
-		container.VolumeMounts = append(container.VolumeMounts, v1.VolumeMount{
-			Name:      "config",
-			MountPath: path,
-			SubPath:   key,
-		})
-	}
-	return container
 }
 
 func (obj *Deployment) displayName() string {
