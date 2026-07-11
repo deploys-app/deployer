@@ -1347,7 +1347,7 @@ func (w *Worker) wafSet(ctx context.Context, it *api.DeployerCommandWAFSet) {
 
 	projectID := idString(it.ProjectID)
 
-	err := w.Client.CreateWAFZone(ctx, projectID, it.ZoneID, it.RateLimitZoneID, it.Rules, it.Limits)
+	err := w.Client.CreateWAFZone(ctx, projectID, it.ZoneID, it.RateLimitZoneID, it.CorazaZoneID, it.Rules, it.Limits, it.ManagedRules)
 	if err != nil {
 		slog.Error("waf: setting error", "id", it.ID, "error", err)
 		return
@@ -1367,7 +1367,7 @@ func (w *Worker) wafDelete(ctx context.Context, it *api.DeployerCommandWAFDelete
 
 	projectID := idString(it.ProjectID)
 
-	err := w.Client.DeleteWAFZone(ctx, projectID, it.ZoneID, it.RateLimitZoneID)
+	err := w.Client.DeleteWAFZone(ctx, projectID, it.ZoneID, it.RateLimitZoneID, it.CorazaZoneID)
 	if err != nil {
 		slog.Error("waf: deleting error", "id", it.ID, "error", err)
 		return

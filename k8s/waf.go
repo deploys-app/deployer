@@ -33,11 +33,15 @@ const (
 // `rules:` YAML document, plus — when the zone has limits — the project's
 // ratelimit zone ConfigMap (name = rateLimitZoneID, labeled
 // parapet.moonrhythm.io/ratelimit: zone) holding them as a parapet `limits:`
-// YAML document. It then binds every one of the project's Ingresses in this
-// namespace via the parapet.moonrhythm.io/waf-zone and ratelimit-zone
-// annotations. An empty limit set removes the ratelimit ConfigMap and
-// annotation so parapet drops the zone instead of keeping an empty set.
-func (c *Client) CreateWAFZone(ctx context.Context, projectID string, zoneID, rateLimitZoneID string, rules []api.WAFRule, limits []api.WAFLimit) error {
+// YAML document, plus — when the zone has managed rules enabled — the
+// project's Coraza zone ConfigMap (name = corazaZoneID, labeled
+// parapet.moonrhythm.io/coraza: zone) holding the generated OWASP CRS SecLang
+// document. It then binds every one of the project's Ingresses in this
+// namespace via the parapet.moonrhythm.io/waf-zone, ratelimit-zone, and
+// coraza-zone annotations. An empty limit set removes the ratelimit ConfigMap
+// and annotation so parapet drops the zone instead of keeping an empty set;
+// nil/disabled managed rules do the same for the Coraza zone.
+func (c *Client) CreateWAFZone(ctx context.Context, projectID string, zoneID, rateLimitZoneID, corazaZoneID string, rules []api.WAFRule, limits []api.WAFLimit, managed *api.WAFManagedRules) error {
 	if rules == nil {
 		rules = []api.WAFRule{}
 	}
@@ -82,22 +86,49 @@ func (c *Client) CreateWAFZone(ctx context.Context, projectID string, zoneID, ra
 			annotations[rateLimitZoneAnnotation] = ""
 		}
 	}
+	// Empty corazaZoneID = pre-managed-rules apiserver — same mixed-version
+	// guard as rateLimitZoneID above: leave everything Coraza-related
+	// untouched.
+	if corazaZoneID != "" {
+		if managed != nil && managed.Enabled {
+			err = c.upsertZoneConfigMap(ctx, projectID, corazaZoneID, corazaLabel, map[string]string{
+				"crs.conf": generateCorazaConf(managed),
+			})
+			if err != nil {
+				return err
+			}
+			annotations[corazaZoneAnnotation] = corazaZoneID
+		} else {
+			err = c.deleteConfigMap(ctx, corazaZoneID)
+			if err != nil {
+				return err
+			}
+			annotations[corazaZoneAnnotation] = ""
+		}
+	}
 
 	return c.syncZoneAnnotations(ctx, projectID, annotations)
 }
 
-// DeleteWAFZone removes the project's WAF zone and ratelimit zone ConfigMaps
-// and strips the parapet.moonrhythm.io/waf-zone and ratelimit-zone annotations
-// from every one of the project's Ingresses in this namespace.
-func (c *Client) DeleteWAFZone(ctx context.Context, projectID string, zoneID, rateLimitZoneID string) error {
+// DeleteWAFZone removes the project's WAF zone, ratelimit zone, and Coraza
+// zone ConfigMaps and strips the parapet.moonrhythm.io/waf-zone,
+// ratelimit-zone, and coraza-zone annotations from every one of the project's
+// Ingresses in this namespace.
+func (c *Client) DeleteWAFZone(ctx context.Context, projectID string, zoneID, rateLimitZoneID, corazaZoneID string) error {
 	err := c.deleteConfigMap(ctx, zoneID)
 	if err != nil {
 		return err
 	}
 	// Empty rateLimitZoneID = pre-ratelimit apiserver (see CreateWAFZone);
-	// nothing ratelimit-related exists to tear down.
+	// nothing ratelimit-related exists to tear down. Same for corazaZoneID.
 	if rateLimitZoneID != "" {
 		err = c.deleteConfigMap(ctx, rateLimitZoneID)
+		if err != nil {
+			return err
+		}
+	}
+	if corazaZoneID != "" {
+		err = c.deleteConfigMap(ctx, corazaZoneID)
 		if err != nil {
 			return err
 		}
@@ -108,6 +139,9 @@ func (c *Client) DeleteWAFZone(ctx context.Context, projectID string, zoneID, ra
 	}
 	if rateLimitZoneID != "" {
 		annotations[rateLimitZoneAnnotation] = ""
+	}
+	if corazaZoneID != "" {
+		annotations[corazaZoneAnnotation] = ""
 	}
 	return c.syncZoneAnnotations(ctx, projectID, annotations)
 }
