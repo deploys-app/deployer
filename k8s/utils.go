@@ -12,6 +12,8 @@ import (
 	"k8s.io/utils/pointer"
 )
 
+const gkeSpotLabel = "cloud.google.com/gke-spot"
+
 var defaultEphemeralStorage = resource.MustParse("20Mi")
 
 func intstrIntPtr(val int) *intstr.IntOrString {
@@ -51,7 +53,7 @@ func nonSpotNodeAffinity() *v1.NodeAffinity {
 			NodeSelectorTerms: []v1.NodeSelectorTerm{{
 				MatchExpressions: []v1.NodeSelectorRequirement{
 					{
-						Key:      "cloud.google.com/gke-spot",
+						Key:      gkeSpotLabel,
 						Operator: v1.NodeSelectorOpDoesNotExist,
 					},
 				},
@@ -68,7 +70,7 @@ func preferNonSpotNodeAffinity() *v1.NodeAffinity {
 				Preference: v1.NodeSelectorTerm{
 					MatchExpressions: []v1.NodeSelectorRequirement{
 						{
-							Key:      "cloud.google.com/gke-spot",
+							Key:      gkeSpotLabel,
 							Operator: v1.NodeSelectorOpDoesNotExist,
 						},
 					},
@@ -86,7 +88,7 @@ func defaultSpotNodeAffinity() *v1.NodeAffinity {
 				Preference: v1.NodeSelectorTerm{
 					MatchExpressions: []v1.NodeSelectorRequirement{
 						{
-							Key:      "cloud.google.com/gke-spot",
+							Key:      gkeSpotLabel,
 							Operator: v1.NodeSelectorOpExists,
 						},
 					},
@@ -104,7 +106,7 @@ func preferSpotNodeAffinity() *v1.NodeAffinity {
 				Preference: v1.NodeSelectorTerm{
 					MatchExpressions: []v1.NodeSelectorRequirement{
 						{
-							Key:      "cloud.google.com/gke-spot",
+							Key:      gkeSpotLabel,
 							Operator: v1.NodeSelectorOpExists,
 						},
 					},
