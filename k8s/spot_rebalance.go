@@ -261,20 +261,37 @@ func isStarting(p *v1.Pod) bool {
 	if p.DeletionTimestamp != nil || p.Spec.NodeName == "" {
 		return false
 	}
-	if p.Status.Phase == v1.PodPending {
-		return true
+	switch p.Status.Phase {
+	case v1.PodSucceeded, v1.PodFailed:
+		return false
+	}
+	if len(p.Status.InitContainerStatuses) == 0 && len(p.Status.ContainerStatuses) == 0 {
+		return p.Status.Phase == v1.PodPending
+	}
+	if hasStuckWait(p.Status.InitContainerStatuses) || hasStuckWait(p.Status.ContainerStatuses) {
+		return false
 	}
 	restartable := restartableInitNames(p)
 	for _, cs := range p.Status.InitContainerStatuses {
 		if waitingStart(cs) {
 			return true
 		}
-		if !restartable[cs.Name] && cs.State.Terminated == nil {
+		if !restartable[cs.Name] && cs.State.Running != nil {
 			return true
 		}
 	}
 	for _, cs := range p.Status.ContainerStatuses {
 		if waitingStart(cs) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStuckWait(statuses []v1.ContainerStatus) bool {
+	for _, cs := range statuses {
+		w := cs.State.Waiting
+		if w != nil && w.Reason != "" && !waitingStart(cs) {
 			return true
 		}
 	}
@@ -297,7 +314,7 @@ func waitingStart(cs v1.ContainerStatus) bool {
 		return false
 	}
 	switch w.Reason {
-	case "ContainerCreating", "PodInitializing", "ErrImagePull", "ImagePullBackOff":
+	case "ContainerCreating", "PodInitializing":
 		return true
 	default:
 		return false
