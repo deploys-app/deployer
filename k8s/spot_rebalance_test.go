@@ -96,6 +96,51 @@ func TestIsStarting(t *testing.T) {
 	if isStarting(bound(v1.PodRunning, "", true)) {
 		t.Error("CrashLoopBackOff should not be starting")
 	}
+	if isStarting(bound(v1.PodPending, "ErrImagePull", false)) {
+		t.Error("ErrImagePull should not be starting")
+	}
+	if isStarting(bound(v1.PodPending, "ImagePullBackOff", false)) {
+		t.Error("ImagePullBackOff should not be starting")
+	}
+	pendingCrash := bound(v1.PodPending, "CrashLoopBackOff", false)
+	if isStarting(pendingCrash) {
+		t.Error("Pending+CrashLoopBackOff should not be starting")
+	}
+	initCrash := bound(v1.PodPending, "", false)
+	initCrash.Spec.InitContainers = []v1.Container{{Name: "init"}}
+	initCrash.Status.InitContainerStatuses = []v1.ContainerStatus{{
+		Name:  "init",
+		State: v1.ContainerState{Waiting: &v1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+	}}
+	if isStarting(initCrash) {
+		t.Error("init CrashLoopBackOff should not be starting")
+	}
+	unknownWait := bound(v1.PodRunning, "ContainerStatusUnknown", false)
+	if isStarting(unknownWait) {
+		t.Error("ContainerStatusUnknown should not be starting")
+	}
+	unknownInit := bound(v1.PodRunning, "", false)
+	unknownInit.Spec.InitContainers = []v1.Container{{Name: "init"}}
+	unknownInit.Status.InitContainerStatuses = []v1.ContainerStatus{{
+		Name: "init",
+	}}
+	if isStarting(unknownInit) {
+		t.Error("unknown init state should not be starting")
+	}
+	completed := bound(v1.PodSucceeded, "", false)
+	completed.Status.ContainerStatuses = []v1.ContainerStatus{{
+		State: v1.ContainerState{Terminated: &v1.ContainerStateTerminated{Reason: "Completed", ExitCode: 0}},
+	}}
+	if isStarting(completed) {
+		t.Error("Completed should not be starting")
+	}
+	errored := bound(v1.PodFailed, "", false)
+	errored.Status.ContainerStatuses = []v1.ContainerStatus{{
+		State: v1.ContainerState{Terminated: &v1.ContainerStateTerminated{Reason: "Error", ExitCode: 1}},
+	}}
+	if isStarting(errored) {
+		t.Error("Error should not be starting")
+	}
 	unbound := &v1.Pod{Status: v1.PodStatus{Phase: v1.PodPending}}
 	if isStarting(unbound) {
 		t.Error("unbound Pending is not on a spot VM")
@@ -113,6 +158,18 @@ func TestIsStarting(t *testing.T) {
 	sidecar.Status.Conditions = []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionTrue}}
 	if isStarting(sidecar) {
 		t.Error("running native sidecar is not starting")
+	}
+	sidecarCrash := bound(v1.PodPending, "PodInitializing", false)
+	sidecarCrash.Spec.InitContainers = []v1.Container{{
+		Name:          "proxy",
+		RestartPolicy: new(v1.ContainerRestartPolicyAlways),
+	}}
+	sidecarCrash.Status.InitContainerStatuses = []v1.ContainerStatus{{
+		Name:  "proxy",
+		State: v1.ContainerState{Waiting: &v1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+	}}
+	if isStarting(sidecarCrash) {
+		t.Error("sidecar CrashLoopBackOff should not be starting even if app is PodInitializing")
 	}
 }
 
@@ -358,6 +415,34 @@ func TestPickSpotRebalance(t *testing.T) {
 		got := pickSpotRebalance("default", now, nodes, pods, deps, rss)
 		if got.Pod == nil {
 			t.Fatal("crashloops should not block pick")
+		}
+	})
+
+	t.Run("stuck and finished pods on spot do not freeze", func(t *testing.T) {
+		nodes, pods, deps, rss := base()
+		stuck := []struct {
+			name  string
+			phase v1.PodPhase
+			cs    v1.ContainerStatus
+		}{
+			{"crash", v1.PodPending, v1.ContainerStatus{State: v1.ContainerState{Waiting: &v1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}},
+			{"done", v1.PodSucceeded, v1.ContainerStatus{State: v1.ContainerState{Terminated: &v1.ContainerStateTerminated{Reason: "Completed"}}}},
+			{"unk", v1.PodRunning, v1.ContainerStatus{State: v1.ContainerState{Waiting: &v1.ContainerStateWaiting{Reason: "ContainerStatusUnknown"}}}},
+			{"err", v1.PodFailed, v1.ContainerStatus{State: v1.ContainerState{Terminated: &v1.ContainerStateTerminated{Reason: "Error", ExitCode: 1}}}},
+		}
+		for _, s := range stuck {
+			p := preferSpotPod(s.name, "other", "spot-a", resource.MustParse("1m"), resource.MustParse("1Mi"))
+			p.Status.Phase = s.phase
+			p.Status.Conditions = nil
+			p.Status.ContainerStatuses = []v1.ContainerStatus{s.cs}
+			pods = append(pods, *p)
+		}
+		got := pickSpotRebalance("default", now, nodes, pods, deps, rss)
+		if got.Pod == nil {
+			t.Fatal("non-starting spot pods should not block pick")
+		}
+		if got.StartingOnSpot != 0 {
+			t.Fatalf("StartingOnSpot = %d, want 0", got.StartingOnSpot)
 		}
 	})
 
