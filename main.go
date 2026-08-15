@@ -139,6 +139,11 @@ func main() {
 		AccessVerifyURL:   cfg.StringDefault("access_verify_url", defaultAccessVerifyURL),
 	}
 
+	if cfg.Bool("spot_rebalance") {
+		slog.Info("spot rebalance enabled")
+		go runSpotRebalance(k8sClient)
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM)
 
