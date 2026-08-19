@@ -111,8 +111,9 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
-	// Bind to the project's WAF, ratelimit, cache, and transform zones if they
-	// exist, so routes added after the zones were created are still covered.
+	// Bind to the project's WAF, ratelimit, coraza, cache, and transform zones
+	// if they exist, so routes added after the zones were created are still
+	// covered.
 	// Best-effort: a lookup error must not fail ingress creation since these are
 	// best-effort relative to routing.
 	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
@@ -124,6 +125,11 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		slog.Error("ingress: looking up ratelimit zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
 		annotation[rateLimitZoneAnnotation] = zoneID
+	}
+	if zoneID, err := c.corazaZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up coraza zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[corazaZoneAnnotation] = zoneID
 	}
 	if zoneID, err := c.cacheZoneForProject(ctx, x.ProjectID); err != nil {
 		slog.Error("ingress: looking up cache zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
@@ -225,8 +231,9 @@ func (c *Client) CreateRedirectIngress(ctx context.Context, x RedirectIngress) e
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
-	// Bind to the project's WAF, ratelimit, cache, and transform zones if they
-	// exist, so routes added after the zones were created are still covered.
+	// Bind to the project's WAF, ratelimit, coraza, cache, and transform zones
+	// if they exist, so routes added after the zones were created are still
+	// covered.
 	// Best-effort: a lookup error must not fail ingress creation since these are
 	// best-effort relative to routing.
 	if zoneID, err := c.wafZoneForProject(ctx, x.ProjectID); err != nil {
@@ -238,6 +245,11 @@ func (c *Client) CreateRedirectIngress(ctx context.Context, x RedirectIngress) e
 		slog.Error("ingress: looking up ratelimit zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
 	} else if zoneID != "" {
 		annotation[rateLimitZoneAnnotation] = zoneID
+	}
+	if zoneID, err := c.corazaZoneForProject(ctx, x.ProjectID); err != nil {
+		slog.Error("ingress: looking up coraza zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)
+	} else if zoneID != "" {
+		annotation[corazaZoneAnnotation] = zoneID
 	}
 	if zoneID, err := c.cacheZoneForProject(ctx, x.ProjectID); err != nil {
 		slog.Error("ingress: looking up cache zone error", "id", x.ID, "projectId", x.ProjectID, "error", err)

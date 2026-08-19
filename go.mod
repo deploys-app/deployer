@@ -1,12 +1,14 @@
 module github.com/deploys-app/deployer
 
-go 1.26.4
+go 1.26.5
 
 require (
 	cloud.google.com/go/pubsub v1.50.2
 	github.com/acoshift/configfile v1.9.0
 	github.com/cert-manager/cert-manager v1.20.2
-	github.com/deploys-app/api v0.0.0-20260708143424-74880377593a
+	github.com/corazawaf/coraza-coreruleset/v4 v4.25.0
+	github.com/deploys-app/api v0.0.0-20260711014233-d27048143494
+	github.com/moonrhythm/parapet-ingress-controller v0.15.4-0.20260710175536-ad90a1a7b02c
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/samber/lo v1.53.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -27,6 +29,8 @@ require (
 	github.com/acoshift/arpc/v2 v2.2.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/corazawaf/coraza/v3 v3.7.0 // indirect
+	github.com/corazawaf/libinjection-go v0.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
@@ -48,17 +52,31 @@ require (
 	github.com/go-openapi/swag/stringutils v0.26.1 // indirect
 	github.com/go-openapi/swag/typeutils v0.26.1 // indirect
 	github.com/go-openapi/swag/yamlutils v0.26.1 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.17 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
+	github.com/gotnospirit/makeplural v0.0.0-20180622080156-a5f48d94d976 // indirect
+	github.com/gotnospirit/messageformat v0.0.0-20221001023931-dfe49f1eb092 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/kaptinlin/go-i18n v0.1.4 // indirect
+	github.com/kaptinlin/jsonschema v0.4.6 // indirect
+	github.com/kavu/go_reuseport v1.5.0 // indirect
+	github.com/magefile/mage v1.17.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
+	github.com/moonrhythm/parapet v0.18.4 // indirect
 	github.com/moonrhythm/validator v1.3.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/valllabh/ocsf-schema-golang v1.0.3 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -89,6 +107,7 @@ require (
 	k8s.io/apiextensions-apiserver v0.36.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260623045532-0b43c5e46c6b // indirect
+	rsc.io/binaryregexp v0.2.0 // indirect
 	sigs.k8s.io/gateway-api v1.5.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect

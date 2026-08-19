@@ -7,7 +7,9 @@ import (
 )
 
 type Client struct {
-	client            *kubernetes.Clientset
+	// client is the interface (not *kubernetes.Clientset) so tests can inject
+	// the fake clientset.
+	client            kubernetes.Interface
 	certManagerClient *certmanager.Clientset
 	namespace         string
 }
