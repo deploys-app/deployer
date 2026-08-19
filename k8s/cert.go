@@ -13,10 +13,17 @@ type Certificate struct {
 	ID        string
 	ProjectID string
 	Domain    string
-	// Wildcard adds a `*.<Domain>` SAN alongside the apex. The Issuer's solver
-	// list already routes the wildcard challenge to DNS-01 (Let's Encrypt
-	// rejects HTTP-01 for wildcards, so cert-manager filters HTTP-01 solvers
-	// out automatically), so no IssuerRef change is needed.
+	// Wildcard adds a `*.<Domain>` SAN alongside the apex and routes the whole
+	// cert through the DNS-01-only ClusterIssuer letsencrypt-dns01.
+	//
+	// The shared `letsencrypt` Issuer carries both an HTTP-01 (parapet ingress)
+	// and a DNS-01 solver. cert-manager only auto-filters HTTP-01 for the
+	// `*.<Domain>` SAN (Let's Encrypt rejects HTTP-01 for wildcards); the bare
+	// apex SAN still selects the HTTP-01 solver. For a Cloudflare/CDN-proxied
+	// domain that challenge can never complete (the request is redirected/404'd
+	// at the edge and never reaches the parapet solver), so cert-manager retries
+	// it forever. Pinning wildcard rows to the DNS-01-only issuer makes both the
+	// apex and the wildcard SAN validate via DNS-01. See deploys-app/deployer#38.
 	Wildcard bool
 }
 
@@ -47,8 +54,18 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) (ready 
 	}
 
 	dnsNames := []string{obj.Domain}
+	issuerRef := cmmeta.ObjectReference{
+		Name: "letsencrypt",
+		Kind: v1.IssuerKind,
+	}
 	if obj.Wildcard {
 		dnsNames = append(dnsNames, "*."+obj.Domain)
+		// DNS-01 for every SAN (apex included) — avoids the HTTP-01 solver that
+		// never validates behind a CDN. See the Wildcard field comment above.
+		issuerRef = cmmeta.ObjectReference{
+			Name: "letsencrypt-dns01",
+			Kind: v1.ClusterIssuerKind,
+		}
 	}
 
 	cert.ObjectMeta.Name = obj.ID
@@ -56,10 +73,7 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) (ready 
 	cert.Spec = v1.CertificateSpec{
 		CommonName: obj.Domain,
 		DNSNames:   dnsNames,
-		IssuerRef: cmmeta.ObjectReference{
-			Name: "letsencrypt",
-			Kind: v1.IssuerKind,
-		},
+		IssuerRef:  issuerRef,
 		PrivateKey: &v1.CertificatePrivateKey{
 			Algorithm: v1.ECDSAKeyAlgorithm,
 			Size:      256,
