@@ -9,14 +9,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// certificateDNS01Label is matched by Issuer/letsencrypt's DNS-01 solver so
+// every SAN (including apex) uses DNS-01 instead of HTTP-01.
+const certificateDNS01Label = "use-dns01"
+
 type Certificate struct {
 	ID        string
 	ProjectID string
 	Domain    string
-	// Wildcard adds a `*.<Domain>` SAN alongside the apex. The Issuer's solver
-	// list already routes the wildcard challenge to DNS-01 (Let's Encrypt
-	// rejects HTTP-01 for wildcards, so cert-manager filters HTTP-01 solvers
-	// out automatically), so no IssuerRef change is needed.
+	// Wildcard adds a `*.<Domain>` SAN alongside the apex and labels the
+	// Certificate so the Issuer's DNS-01 solver is selected for every SAN.
 	Wildcard bool
 }
 
@@ -49,6 +51,7 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) (ready 
 	dnsNames := []string{obj.Domain}
 	if obj.Wildcard {
 		dnsNames = append(dnsNames, "*."+obj.Domain)
+		labels[certificateDNS01Label] = "true"
 	}
 
 	cert.ObjectMeta.Name = obj.ID
