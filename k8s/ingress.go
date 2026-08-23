@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 
 	"github.com/deploys-app/api"
@@ -61,14 +62,12 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 
 	rule := networking.IngressRule{
 		Host: x.Domain,
-		IngressRuleValue: networking.IngressRuleValue{
-			HTTP: &networking.HTTPIngressRuleValue{
-				Paths: []networking.HTTPIngressPath{
-					{
-						Path:     x.Path,
-						Backend:  backend,
-						PathType: &pathType,
-					},
+		HTTP: &networking.HTTPIngressRuleValue{
+			Paths: []networking.HTTPIngressPath{
+				{
+					Path:     x.Path,
+					Backend:  backend,
+					PathType: &pathType,
 				},
 			},
 		},
@@ -140,16 +139,12 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		"id":        x.ID,
 		"projectId": x.ProjectID,
 	}
-	for k, v := range x.Labels {
-		labels[k] = v
-	}
+	maps.Copy(labels, x.Labels)
 
 	ing := &networking.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        x.ID,
-			Labels:      labels,
-			Annotations: annotation,
-		},
+		Name:        x.ID,
+		Labels:      labels,
+		Annotations: annotation,
 		Spec: networking.IngressSpec{
 			IngressClassName: pointer.String("parapet"),
 			Rules:            []networking.IngressRule{rule},
@@ -251,14 +246,12 @@ func (c *Client) CreateRedirectIngress(ctx context.Context, x RedirectIngress) e
 	}
 
 	ing := &networking.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: x.ID,
-			Labels: map[string]string{
-				"id":        x.ID,
-				"projectId": x.ProjectID,
-			},
-			Annotations: annotation,
+		Name: x.ID,
+		Labels: map[string]string{
+			"id":        x.ID,
+			"projectId": x.ProjectID,
 		},
+		Annotations: annotation,
 		Spec: networking.IngressSpec{
 			IngressClassName: pointer.String("parapet"),
 			DefaultBackend: &networking.IngressBackend{

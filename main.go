@@ -1847,12 +1847,10 @@ func staticSitePrefix(it *api.DeployerCommandDeploymentDeploy) string {
 
 	// fallback: parse `site://<bucket>/<project>/<name>@<release-sha>`
 	ref := strings.TrimPrefix(it.Spec.Site, "site://")
-	at := strings.LastIndex(ref, "@")
-	if at < 0 {
+	pathPart, release, ok := strings.CutLast(ref, "@")
+	if !ok {
 		return ""
 	}
-	release := ref[at+1:]
-	pathPart := ref[:at] // <bucket>/<project>/<name>
 	segs := strings.Split(strings.Trim(pathPart, "/"), "/")
 	if len(segs) < 3 || release == "" {
 		return ""
@@ -1882,8 +1880,8 @@ func staticSitePrefix(it *api.DeployerCommandDeploymentDeploy) string {
 func (w *Worker) reconcilePinnedReleaseIngresses(ctx context.Context, it *api.DeployerCommandDeploymentDeploy, id, projectID string) error {
 	// "<project>/<name>" — the release-prefix base shared by every revision.
 	base := staticSitePrefix(it)
-	if i := strings.LastIndex(base, "/"); i >= 0 {
-		base = base[:i]
+	if before, _, ok := strings.CutLast(base, "/"); ok {
+		base = before
 	}
 	if base == "" {
 		// Malformed/empty site prefix: can't form valid upstream-paths, so leave

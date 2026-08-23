@@ -42,7 +42,7 @@ func TestIsSpotNode(t *testing.T) {
 	if isSpotNode(&v1.Node{}) {
 		t.Fatal("unlabeled node is not spot")
 	}
-	n := &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{gkeSpotLabel: "true"}}}
+	n := &v1.Node{Labels: map[string]string{gkeSpotLabel: "true"}}
 	if !isSpotNode(n) {
 		t.Fatal("labeled node should be spot")
 	}
@@ -463,11 +463,9 @@ func TestPickSpotRebalance(t *testing.T) {
 
 func readySpotNode(name, cpu, mem string, unschedulable bool) *v1.Node {
 	n := &v1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
-			Labels: map[string]string{gkeSpotLabel: "true"},
-		},
-		Spec: v1.NodeSpec{Unschedulable: unschedulable},
+		Name:   name,
+		Labels: map[string]string{gkeSpotLabel: "true"},
+		Spec:   v1.NodeSpec{Unschedulable: unschedulable},
 		Status: v1.NodeStatus{
 			Allocatable: v1.ResourceList{
 				v1.ResourceCPU:    resource.MustParse(cpu),
@@ -487,16 +485,14 @@ func readyOnDemandNode(name, cpu, mem string) *v1.Node {
 
 func preferSpotPod(name, id, node string, cpu, mem resource.Quantity) *v1.Pod {
 	return &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-			Labels:    map[string]string{"id": id, "projectId": "1"},
-			OwnerReferences: []metav1.OwnerReference{{
-				Kind:       "ReplicaSet",
-				Name:       id + "-rs",
-				Controller: new(true),
-			}},
-		},
+		Name:      name,
+		Namespace: "default",
+		Labels:    map[string]string{"id": id, "projectId": "1"},
+		OwnerReferences: []metav1.OwnerReference{{
+			Kind:       "ReplicaSet",
+			Name:       id + "-rs",
+			Controller: new(true),
+		}},
 		Spec: v1.PodSpec{
 			NodeName: node,
 			Affinity: &v1.Affinity{NodeAffinity: defaultSpotNodeAffinity()},
@@ -526,8 +522,8 @@ func spotToleration() []v1.Toleration {
 
 func settledDeploy(name string, replicas int32) appsv1.Deployment {
 	return appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 1},
-		Spec:       appsv1.DeploymentSpec{Replicas: new(replicas)},
+		Name: name, Generation: 1,
+		Spec: appsv1.DeploymentSpec{Replicas: new(replicas)},
 		Status: appsv1.DeploymentStatus{
 			ObservedGeneration:  1,
 			UpdatedReplicas:     replicas,
@@ -539,14 +535,12 @@ func settledDeploy(name string, replicas int32) appsv1.Deployment {
 
 func ownedRS(name, deploy string) appsv1.ReplicaSet {
 	return appsv1.ReplicaSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			OwnerReferences: []metav1.OwnerReference{{
-				Kind:       "Deployment",
-				Name:       deploy,
-				Controller: new(true),
-			}},
-		},
+		Name: name,
+		OwnerReferences: []metav1.OwnerReference{{
+			Kind:       "Deployment",
+			Name:       deploy,
+			Controller: new(true),
+		}},
 	}
 }
 

@@ -164,12 +164,8 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 
 	cj.Spec.JobTemplate.Spec.Template.Spec.Volumes = append(cj.Spec.JobTemplate.Spec.Template.Spec.Volumes, v1.Volume{
 		Name: "config",
-		VolumeSource: v1.VolumeSource{
-			ConfigMap: &v1.ConfigMapVolumeSource{
-				LocalObjectReference: v1.LocalObjectReference{
-					Name: obj.ID,
-				},
-			},
+		ConfigMap: &v1.ConfigMapVolumeSource{
+			Name: obj.ID,
 		},
 	})
 	for key, path := range obj.BindConfigMap {
@@ -185,10 +181,8 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 	if obj.Disk.Name != "" {
 		cj.Spec.JobTemplate.Spec.Template.Spec.Volumes = append(cj.Spec.JobTemplate.Spec.Template.Spec.Volumes, v1.Volume{
 			Name: "data",
-			VolumeSource: v1.VolumeSource{
-				PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
-					ClaimName: obj.Disk.Name,
-				},
+			PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+				ClaimName: obj.Disk.Name,
 			},
 		})
 		app.VolumeMounts = append(app.VolumeMounts, v1.VolumeMount{

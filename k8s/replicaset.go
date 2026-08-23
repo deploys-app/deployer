@@ -80,11 +80,9 @@ func (c *Client) CreateReplicaSet(ctx context.Context, obj ReplicaSet) error {
 		obj.Env["PORT"] = strconv.Itoa(obj.ExposePort)
 
 		livenessProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt(obj.ExposePort),
-					Host: "",
-				},
+			TCPSocket: &v1.TCPSocketAction{
+				Port: intstr.FromInt(obj.ExposePort),
+				Host: "",
 			},
 			InitialDelaySeconds: 5,
 			TimeoutSeconds:      10,
@@ -94,11 +92,9 @@ func (c *Client) CreateReplicaSet(ctx context.Context, obj ReplicaSet) error {
 		}
 
 		readinessProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt(obj.ExposePort),
-					Host: "",
-				},
+			TCPSocket: &v1.TCPSocketAction{
+				Port: intstr.FromInt(obj.ExposePort),
+				Host: "",
 			},
 			InitialDelaySeconds: 3,
 			TimeoutSeconds:      5,
@@ -212,10 +208,8 @@ func (c *Client) CreateReplicaSet(ctx context.Context, obj ReplicaSet) error {
 		rs.Spec.Template.Spec.Volumes = []v1.Volume{
 			{
 				Name: "data",
-				VolumeSource: v1.VolumeSource{
-					PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
-						ClaimName: obj.Disk.Name,
-					},
+				PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+					ClaimName: obj.Disk.Name,
 				},
 			},
 		}

@@ -53,10 +53,8 @@ func (c *Client) RebalanceSpot(ctx context.Context) error {
 		"fromNode", pick.Pod.Spec.NodeName,
 	)
 	return c.client.CoreV1().Pods(pick.Pod.Namespace).EvictV1(ctx, &policyv1.Eviction{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pick.Pod.Name,
-			Namespace: pick.Pod.Namespace,
-		},
+		Name:      pick.Pod.Name,
+		Namespace: pick.Pod.Namespace,
 	})
 }
 
@@ -280,12 +278,7 @@ func isStarting(p *v1.Pod) bool {
 			return true
 		}
 	}
-	for _, cs := range p.Status.ContainerStatuses {
-		if waitingStart(cs) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Status.ContainerStatuses, waitingStart)
 }
 
 func hasStuckWait(statuses []v1.ContainerStatus) bool {

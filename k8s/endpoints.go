@@ -194,27 +194,25 @@ func buildExternalEndpointSlice(obj ExternalUpstream) *discoveryv1.EndpointSlice
 		addr = parsed.String()
 	}
 	return &discoveryv1.EndpointSlice{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: obj.ID,
-			Labels: map[string]string{
-				"id":        obj.ID,
-				"projectId": obj.ProjectID,
-				// Associates this slice with the selector-less Service of the same
-				// name; consumers find a Service's slices by this label.
-				discoveryv1.LabelServiceName: obj.ID,
-				// We own this slice — the EndpointSlice controller only manages
-				// slices for Services with a selector, which this Service is not.
-				discoveryv1.LabelManagedBy: managedByExternalUpstream,
-			},
+		Name: obj.ID,
+		Labels: map[string]string{
+			"id":        obj.ID,
+			"projectId": obj.ProjectID,
+			// Associates this slice with the selector-less Service of the same
+			// name; consumers find a Service's slices by this label.
+			discoveryv1.LabelServiceName: obj.ID,
+			// We own this slice — the EndpointSlice controller only manages
+			// slices for Services with a selector, which this Service is not.
+			discoveryv1.LabelManagedBy: managedByExternalUpstream,
 		},
 		AddressType: externalAddressType(obj.IP),
 		Endpoints: []discoveryv1.Endpoint{
 			{
 				Addresses: []string{addr},
 				Conditions: discoveryv1.EndpointConditions{
-					Ready:       ptr.To(true),
-					Serving:     ptr.To(true),
-					Terminating: ptr.To(false),
+					Ready:       new(true),
+					Serving:     new(true),
+					Terminating: new(false),
 				},
 			},
 		},
@@ -222,8 +220,8 @@ func buildExternalEndpointSlice(obj ExternalUpstream) *discoveryv1.EndpointSlice
 		// binds them, mirroring the Endpoints object above.
 		Ports: []discoveryv1.EndpointPort{
 			{
-				Name:     ptr.To("http"),
-				Port:     ptr.To(int32(obj.Port)),
+				Name:     new("http"),
+				Port:     new(int32(obj.Port)),
 				Protocol: ptr.To(v1.ProtocolTCP),
 			},
 		},
