@@ -154,11 +154,9 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		obj.Env["PORT"] = strconv.Itoa(obj.ExposePort)
 
 		livenessProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt(obj.ExposePort),
-					Host: "",
-				},
+			TCPSocket: &v1.TCPSocketAction{
+				Port: intstr.FromInt(obj.ExposePort),
+				Host: "",
 			},
 			InitialDelaySeconds: 5,
 			TimeoutSeconds:      10,
@@ -168,11 +166,9 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		}
 
 		readinessProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt(obj.ExposePort),
-					Host: "",
-				},
+			TCPSocket: &v1.TCPSocketAction{
+				Port: intstr.FromInt(obj.ExposePort),
+				Host: "",
 			},
 			InitialDelaySeconds: 3,
 			TimeoutSeconds:      5,
@@ -188,11 +184,9 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		}
 
 		startupProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt(obj.ExposePort),
-					Host: "",
-				},
+			TCPSocket: &v1.TCPSocketAction{
+				Port: intstr.FromInt(obj.ExposePort),
+				Host: "",
 			},
 			InitialDelaySeconds: 0,
 			TimeoutSeconds:      2,
@@ -368,12 +362,8 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 
 	deploy.Spec.Template.Spec.Volumes = append(deploy.Spec.Template.Spec.Volumes, v1.Volume{
 		Name: "config",
-		VolumeSource: v1.VolumeSource{
-			ConfigMap: &v1.ConfigMapVolumeSource{
-				LocalObjectReference: v1.LocalObjectReference{
-					Name: obj.ID,
-				},
-			},
+		ConfigMap: &v1.ConfigMapVolumeSource{
+			Name: obj.ID,
 		},
 	})
 	for key, path := range obj.BindConfigMap {
@@ -389,10 +379,8 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 	if obj.Disk.Name != "" {
 		deploy.Spec.Template.Spec.Volumes = append(deploy.Spec.Template.Spec.Volumes, v1.Volume{
 			Name: "data",
-			VolumeSource: v1.VolumeSource{
-				PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
-					ClaimName: obj.Disk.Name,
-				},
+			PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+				ClaimName: obj.Disk.Name,
 			},
 		})
 		app.VolumeMounts = append(app.VolumeMounts, v1.VolumeMount{
@@ -484,11 +472,9 @@ func buildSidecarContainer(s Sidecar) v1.Container {
 			ContainerPort: int32(hc.Port),
 		})
 		container.StartupProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				HTTPGet: &v1.HTTPGetAction{
-					Path: hc.Path,
-					Port: intstr.FromInt(hc.Port),
-				},
+			HTTPGet: &v1.HTTPGetAction{
+				Path: hc.Path,
+				Port: intstr.FromInt(hc.Port),
 			},
 			PeriodSeconds:    1,
 			FailureThreshold: 60,
