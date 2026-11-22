@@ -59,7 +59,7 @@ func (c *Client) CreateCertificate(ctx context.Context, obj Certificate) (ready 
 	cert.Spec = v1.CertificateSpec{
 		CommonName: obj.Domain,
 		DNSNames:   dnsNames,
-		IssuerRef: cmmeta.ObjectReference{
+		IssuerRef: cmmeta.IssuerReference{
 			Name: "letsencrypt",
 			Kind: v1.IssuerKind,
 		},
